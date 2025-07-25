@@ -8,6 +8,7 @@ def main():
     # server_socket.accept() # wait for client
     connection, _ = server_socket.accept() 
     connection.sendall(b"+PONG\r\n")
+    connection.sendall(b"+PONG\r\n")
 
 
 if __name__ == "__main__":
