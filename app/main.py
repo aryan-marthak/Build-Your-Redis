@@ -13,6 +13,7 @@ def main():
     while True:
         connection, _ = server_socket.accept() 
         thread = threading.Thread(target=handle_client, args=(connection,))
+        thread.start()
 
 
 if __name__ == "__main__":
