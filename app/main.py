@@ -6,38 +6,39 @@ sel = selectors.DefaultSelector()
 def accept(sock):
     conn, addr = sock.accept()
     conn.setblocking(False)
-    sel.register(conn, selectors.EVENT_READ, handle)
+    sel.register(conn, selectors.EVENT_READ, read)
 
-def handle(conn):
-    try:
-        data = conn.recv(1024)
-        if not data:
-            sel.unregister(conn)
-            conn.close()
-            return
-
-        if b'PING' in data:
-            conn.sendall(b"+PONG\r\n")
-        elif b'ECHO' in data:
-            parts = data.split(b'\r\n')
-            if len(parts) >= 6:
-                msg = parts[5]
-                resp = b"$" + str(len(msg)).encode() + b"\r\n" + msg + b"\r\n"
-                conn.sendall(resp)
-    except Exception:
+def read(conn):
+    data = conn.recv(1024)
+    if not data:
         sel.unregister(conn)
         conn.close()
+        return
 
-with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
-    s.bind(('localhost', 6379))
-    s.listen()
-    s.setblocking(False)
-    sel.register(s, selectors.EVENT_READ, accept)
+    try:
+        parts = data.split(b'\r\n')
+        if parts[0].startswith(b'*') and parts[2].upper() == b'ECHO':
+            msg = parts[4]
+            resp = f"${len(msg)}\r\n{msg.decode()}\r\n".encode()
+            conn.send(resp)
+        elif parts[0].startswith(b'*') and parts[2].upper() == b'PING':
+            conn.send(b"+PONG\r\n")
+        else:
+            conn.send(b"-ERR unknown command\r\n")
+    except:
+        conn.send(b"-ERR parsing failed\r\n")
 
-    while True:
-        for key, _ in sel.select():
-            callback = key.data
-            callback(key.fileobj)
+sock = socket.socket()
+sock.bind(('localhost', 6379))
+sock.listen()
+sock.setblocking(False)
+sel.register(sock, selectors.EVENT_READ, accept)
+
+while True:
+    for key, _ in sel.select():
+        callback = key.data
+        callback(key.fileobj)
+
 
 
 # import socket  # noqa: F401
