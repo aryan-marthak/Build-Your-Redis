@@ -1,32 +1,33 @@
 import socket
 
-def parse_echo(data):
+def parse_command(data):
     parts = data.split(b"\r\n")
-    if len(parts) >= 5 and parts[0].startswith(b"*") and parts[2].upper() == b"ECHO":
-        return parts[4]
+    if parts[0].startswith(b"*") and parts[2].startswith(b"$"):
+        command = parts[2].decode().upper()
+        if command == "PING":
+            return b"+PONG\r\n"
+        elif command == "ECHO" and len(parts) > 4:
+            message = parts[4]
+            return b"$" + str(len(message)).encode() + b"\r\n" + message + b"\r\n"
     return None
 
-def resp_bulk_string(msg):
-    return b"$" + str(len(msg)).encode() + b"\r\n" + msg + b"\r\n"
-
 def main():
-    server_socket = socket.create_server(("localhost", 6379), reuse_port=True)
+    server = socket.create_server(("localhost", 6379), reuse_port=True)
     while True:
-        conn, _ = server_socket.accept()
-        buffer = b""
-        while True:
-            data = conn.recv(1024)
-            if not data:
-                break
-            buffer += data
-            response = parse_echo(buffer)
-            if response:
-                conn.sendall(resp_bulk_string(response))
-                break
+        conn, _ = server.accept()
+        data = conn.recv(1024)
+        if not data:
+            conn.close()
+            continue
+
+        response = parse_command(data)
+        if response:
+            conn.sendall(response)
         conn.close()
 
 if __name__ == "__main__":
     main()
+
 
 
 # import socket  # noqa: F401
