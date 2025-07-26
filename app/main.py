@@ -17,30 +17,29 @@ def read(conn):
             conn.close()
             return
 
-        # Check for PING
         if b'PING' in data:
             conn.send(b'+PONG\r\n')
             return
 
-        # Parse RESP array for ECHO
-        if data.startswith(b'*2\r\n'):
-            parts = data.split(b'\r\n')
-            if len(parts) >= 6 and parts[2] == 'ECHO':
-                msg = parts[5].encode()
-                resp = b'$' + str(len(msg)).encode() + b'\r\n' + msg + b'\r\n'
-                conn.send(resp)
-                return
+        # RESP: *2\r\n$4\r\nECHO\r\n$4\r\npear\r\n
+        parts = data.split(b'\r\n')
+        if len(parts) >= 5 and parts[2].upper() == b'ECHO':
+            msg = parts[4]
+            length = str(len(msg)).encode()
+            response = b'$' + length + b'\r\n' + msg + b'\r\n'
+            conn.send(response)
+            return
 
     except Exception:
         sel.unregister(conn)
         conn.close()
 
 def main():
-    server_socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-    server_socket.bind(('localhost', 6379))
-    server_socket.listen()
-    server_socket.setblocking(False)
-    sel.register(server_socket, selectors.EVENT_READ, accept)
+    sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+    sock.bind(('localhost', 6379))
+    sock.listen()
+    sock.setblocking(False)
+    sel.register(sock, selectors.EVENT_READ, accept)
 
     while True:
         for key, _ in sel.select():
