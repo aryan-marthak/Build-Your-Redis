@@ -1,31 +1,58 @@
-import socket  # noqa: F401
-import selectors
+import socket
 
-sel = selectors.DefaultSelector()
+def parsing(data):
+    split = data.split(b"\r\n")
+    if split[0].startswith(b"*") and split[2].startswith(b"$"):
+        echo = split[2].decode().upper()
+        if echo == "ECHO":
+            return split[4]
+    return None
 
-def accept(sock):
-    conn, _ = sock.accept()
-    conn.setblocking(False)
-    sel.register(conn, selectors.EVENT_READ, read)
+def string(words):
+    return b"$" + str(len(words)).encode() + b"\r\n" + words + b"\r\n"
 
-def read(conn):
-    data = conn.recv(1024)
-    if b"PING" in data.upper():
-        conn.sendall(b"+PONG\r\n")
 
 def main():
     server_socket = socket.create_server(("localhost", 6379), reuse_port=True)
-    server_socket.setblocking(False)
-    sel.register(server_socket, selectors.EVENT_READ, accept)
-    
     while True:
-        events = sel.select()
-        for key, _ in events:
-            callback = key.data
-            callback(key.fileobj)
+        conn, _ = server_socket.accept()
+        data = conn.recv(1024)
+        message = parsing(data)
+        if message:
+            response = string(message)
+            conn.sendall(response)
 
 if __name__ == "__main__":
     main()
+
+# import socket  # noqa: F401
+# import selectors
+
+# sel = selectors.DefaultSelector()
+
+# def accept(sock):
+#     conn, _ = sock.accept()
+#     conn.setblocking(False)
+#     sel.register(conn, selectors.EVENT_READ, read)
+
+# def read(conn):
+#     data = conn.recv(1024)
+#     if b"PING" in data.upper():
+#         conn.sendall(b"+PONG\r\n")
+
+# def main():
+#     server_socket = socket.create_server(("localhost", 6379), reuse_port=True)
+#     server_socket.setblocking(False)
+#     sel.register(server_socket, selectors.EVENT_READ, accept)
+    
+#     while True:
+#         events = sel.select()
+#         for key, _ in events:
+#             callback = key.data
+#             callback(key.fileobj)
+
+# if __name__ == "__main__":
+#     main()
 
 # import socket  # noqa: F401
 # import threading
