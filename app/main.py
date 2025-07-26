@@ -1,15 +1,19 @@
 import socket
 
-def parse_command(data):
+def parse_resp(data):
+    """Parse RESP array and return list of strings like ['ECHO', 'hey']"""
     parts = data.split(b"\r\n")
-    if parts[0].startswith(b"*") and parts[2].startswith(b"$"):
-        command = parts[2].decode().upper()
-        if command == "PING":
-            return b"+PONG\r\n"
-        elif command == "ECHO" and len(parts) > 4:
-            message = parts[4]
-            return b"$" + str(len(message)).encode() + b"\r\n" + message + b"\r\n"
-    return None
+    count = int(parts[0][1:])  # number of elements in array
+    result = []
+    i = 1
+    while len(result) < count:
+        if parts[i].startswith(b"$"):
+            length = int(parts[i][1:])
+            result.append(parts[i + 1])
+            i += 2
+        else:
+            i += 1
+    return result
 
 def main():
     server = socket.create_server(("localhost", 6379), reuse_port=True)
@@ -20,13 +24,26 @@ def main():
             conn.close()
             continue
 
-        response = parse_command(data)
-        if response:
-            conn.sendall(response)
+        try:
+            cmd_parts = parse_resp(data)
+            command = cmd_parts[0].decode().upper()
+
+            if command == "PING":
+                conn.sendall(b"+PONG\r\n")
+            elif command == "ECHO" and len(cmd_parts) == 2:
+                msg = cmd_parts[1]
+                resp = b"$" + str(len(msg)).encode() + b"\r\n" + msg + b"\r\n"
+                conn.sendall(resp)
+            else:
+                conn.sendall(b"-ERR unknown command\r\n")
+        except Exception as e:
+            conn.sendall(b"-ERR parsing failed\r\n")
+
         conn.close()
 
 if __name__ == "__main__":
     main()
+
 
 
 
