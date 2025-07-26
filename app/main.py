@@ -1,35 +1,33 @@
 import socket
 
-def parsing(data):
-    split = data.split(b"\r\n")
-    if split[0].startswith(b"*") and split[2].startswith(b"$"):
-        echo = split[2].decode().upper()
-        if echo == "ECHO":
-            return split[4]
+def parse_echo(data):
+    parts = data.split(b"\r\n")
+    if len(parts) >= 5 and parts[0].startswith(b"*") and parts[2].upper() == b"ECHO":
+        return parts[4]
     return None
 
-def string(words):
-    return b"$" + str(len(words)).encode() + b"\r\n" + words + b"\r\n"
-
+def resp_bulk_string(msg):
+    return b"$" + str(len(msg)).encode() + b"\r\n" + msg + b"\r\n"
 
 def main():
     server_socket = socket.create_server(("localhost", 6379), reuse_port=True)
     while True:
         conn, _ = server_socket.accept()
-        temp = b""
+        buffer = b""
         while True:
             data = conn.recv(1024)
             if not data:
                 break
-            temp += data
-            message = parsing(temp)
-            if message:
-                conn.sendall(string(message))
+            buffer += data
+            response = parse_echo(buffer)
+            if response:
+                conn.sendall(resp_bulk_string(response))
                 break
         conn.close()
 
 if __name__ == "__main__":
     main()
+
 
 # import socket  # noqa: F401
 # import selectors
