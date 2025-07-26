@@ -9,13 +9,13 @@ def accept(sock):
     sel.register(conn, selectors.EVENT_READ, read)
 
 def read(conn):
-    data = conn.recv(1024)
-    if not data:
-        sel.unregister(conn)
-        conn.close()
-        return
-
     try:
+        data = conn.recv(1024)
+        if not data:
+            sel.unregister(conn)
+            conn.close()
+            return
+
         parts = data.split(b'\r\n')
         if parts[0].startswith(b'*') and parts[2].upper() == b'ECHO':
             msg = parts[4]
@@ -29,6 +29,7 @@ def read(conn):
         conn.send(b"-ERR parsing failed\r\n")
 
 sock = socket.socket()
+sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)  # prevents "Address already in use"
 sock.bind(('localhost', 6379))
 sock.listen()
 sock.setblocking(False)
@@ -38,6 +39,8 @@ while True:
     for key, _ in sel.select():
         callback = key.data
         callback(key.fileobj)
+
+
 
 
 
