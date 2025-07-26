@@ -1,3 +1,4 @@
+#!/usr/bin/env python3
 import socket
 import selectors
 
@@ -15,16 +16,22 @@ def read(conn):
             sel.unregister(conn)
             conn.close()
             return
+
+        # Check for PING
         if b'PING' in data:
             conn.send(b'+PONG\r\n')
-        elif b'ECHO' in data:
-            # RESP: *2\r\n$4\r\nECHO\r\n$9\r\npineapple\r\n
+            return
+
+        # Parse RESP array for ECHO
+        if data.startswith(b'*2\r\n'):
             parts = data.split(b'\r\n')
-            if len(parts) >= 6:
-                msg = parts[5]
+            if len(parts) >= 6 and parts[2] == 'ECHO':
+                msg = parts[5].encode()
                 resp = b'$' + str(len(msg)).encode() + b'\r\n' + msg + b'\r\n'
                 conn.send(resp)
-    except ConnectionResetError:
+                return
+
+    except Exception:
         sel.unregister(conn)
         conn.close()
 
@@ -42,6 +49,7 @@ def main():
 
 if __name__ == "__main__":
     main()
+
 
 
 
