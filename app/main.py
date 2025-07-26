@@ -16,11 +16,14 @@ def main():
     server_socket = socket.create_server(("localhost", 6379), reuse_port=True)
     while True:
         conn, _ = server_socket.accept()
-        data = conn.recv(1024)
-        message = parsing(data)
-        if message:
-            response = string(message)
-            conn.sendall(response)
+        temp = b""
+        while True:
+            data = conn.recv(1024)
+            temp += data
+            message = parsing(temp)
+            if message:
+                response = string(message)
+                conn.sendall(response)
 
 if __name__ == "__main__":
     main()
