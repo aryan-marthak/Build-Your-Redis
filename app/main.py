@@ -19,11 +19,15 @@ def main():
         temp = b""
         while True:
             data = conn.recv(1024)
+            if not data:
+                break
             temp += data
             message = parsing(temp)
             if message:
                 response = string(message)
                 conn.sendall(response)
+                break
+        conn.close()
 
 if __name__ == "__main__":
     main()
