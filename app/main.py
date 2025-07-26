@@ -24,7 +24,7 @@ def main():
             temp += data
             message = parsing(temp)
             if message:
-                conn.sendall(string(response))
+                conn.sendall(string(message))
                 break
         conn.close()
 
