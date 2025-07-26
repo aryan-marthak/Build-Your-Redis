@@ -1,33 +1,43 @@
-#!/usr/bin/env python3
 import socket
+import selectors
 
-HOST = 'localhost'
-PORT = 6379
+sel = selectors.DefaultSelector()
 
-with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as server:
-    server.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
-    server.bind((HOST, PORT))
-    server.listen(1)
-    conn, addr = server.accept()
+def accept(sock):
+    conn, addr = sock.accept()
+    conn.setblocking(False)
+    sel.register(conn, selectors.EVENT_READ, handle)
 
-    with conn:
+def handle(conn):
+    try:
         data = conn.recv(1024)
+        if not data:
+            sel.unregister(conn)
+            conn.close()
+            return
 
         if b'PING' in data:
-            conn.sendall(b'+PONG\r\n')
-
+            conn.sendall(b"+PONG\r\n")
         elif b'ECHO' in data:
-            # RESP parsing: get the actual argument
-            try:
-                lines = data.split(b'\r\n')
-                if len(lines) >= 5:
-                    echo_msg = lines[4]
-                    length = str(len(echo_msg)).encode()
-                    response = b'$' + length + b'\r\n' + echo_msg + b'\r\n'
-                    conn.sendall(response)
-            except:
-                conn.sendall(b'-Error\r\n')
+            parts = data.split(b'\r\n')
+            if len(parts) >= 6:
+                msg = parts[5]
+                resp = b"$" + str(len(msg)).encode() + b"\r\n" + msg + b"\r\n"
+                conn.sendall(resp)
+    except Exception:
+        sel.unregister(conn)
+        conn.close()
 
+with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
+    s.bind(('localhost', 6379))
+    s.listen()
+    s.setblocking(False)
+    sel.register(s, selectors.EVENT_READ, accept)
+
+    while True:
+        for key, _ in sel.select():
+            callback = key.data
+            callback(key.fileobj)
 
 
 # import socket  # noqa: F401
