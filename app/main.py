@@ -1,45 +1,44 @@
 import socket
+import selectors
 
-def parse_resp(data):
-    """Parse RESP array and return list of strings like ['ECHO', 'hey']"""
-    parts = data.split(b"\r\n")
-    count = int(parts[0][1:])  # number of elements in array
-    result = []
-    i = 1
-    while len(result) < count:
-        if parts[i].startswith(b"$"):
-            length = int(parts[i][1:])
-            result.append(parts[i + 1])
-            i += 2
-        else:
-            i += 1
-    return result
+sel = selectors.DefaultSelector()
 
-def main():
-    server = socket.create_server(("localhost", 6379), reuse_port=True)
-    while True:
-        conn, _ = server.accept()
+def accept(sock):
+    conn, _ = sock.accept()
+    conn.setblocking(False)
+    sel.register(conn, selectors.EVENT_READ, read)
+
+def read(conn):
+    try:
         data = conn.recv(1024)
         if not data:
+            sel.unregister(conn)
             conn.close()
-            continue
-
-        try:
-            cmd_parts = parse_resp(data)
-            command = cmd_parts[0].decode().upper()
-
-            if command == "PING":
-                conn.sendall(b"+PONG\r\n")
-            elif command == "ECHO" and len(cmd_parts) == 2:
-                msg = cmd_parts[1]
-                resp = b"$" + str(len(msg)).encode() + b"\r\n" + msg + b"\r\n"
-                conn.sendall(resp)
-            else:
-                conn.sendall(b"-ERR unknown command\r\n")
-        except Exception as e:
-            conn.sendall(b"-ERR parsing failed\r\n")
-
+            return
+        if b'PING' in data:
+            conn.send(b'+PONG\r\n')
+        elif b'ECHO' in data:
+            # RESP: *2\r\n$4\r\nECHO\r\n$9\r\npineapple\r\n
+            parts = data.split(b'\r\n')
+            if len(parts) >= 6:
+                msg = parts[5]
+                resp = b'$' + str(len(msg)).encode() + b'\r\n' + msg + b'\r\n'
+                conn.send(resp)
+    except ConnectionResetError:
+        sel.unregister(conn)
         conn.close()
+
+def main():
+    server_socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+    server_socket.bind(('localhost', 6379))
+    server_socket.listen()
+    server_socket.setblocking(False)
+    sel.register(server_socket, selectors.EVENT_READ, accept)
+
+    while True:
+        for key, _ in sel.select():
+            callback = key.data
+            callback(key.fileobj)
 
 if __name__ == "__main__":
     main()
