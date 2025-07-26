@@ -1,55 +1,32 @@
 #!/usr/bin/env python3
 import socket
-import selectors
 
-sel = selectors.DefaultSelector()
+HOST = 'localhost'
+PORT = 6379
 
-def accept(sock):
-    conn, _ = sock.accept()
-    conn.setblocking(False)
-    sel.register(conn, selectors.EVENT_READ, read)
+with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as server:
+    server.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+    server.bind((HOST, PORT))
+    server.listen(1)
+    conn, addr = server.accept()
 
-def read(conn):
-    try:
+    with conn:
         data = conn.recv(1024)
-        if not data:
-            sel.unregister(conn)
-            conn.close()
-            return
 
         if b'PING' in data:
-            conn.send(b'+PONG\r\n')
-            return
+            conn.sendall(b'+PONG\r\n')
 
-        # RESP: *2\r\n$4\r\nECHO\r\n$4\r\npear\r\n
-        parts = data.split(b'\r\n')
-        if len(parts) >= 5 and parts[2].upper() == b'ECHO':
-            msg = parts[4]
-            length = str(len(msg)).encode()
-            response = b'$' + length + b'\r\n' + msg + b'\r\n'
-            conn.send(response)
-            return
-
-    except Exception:
-        sel.unregister(conn)
-        conn.close()
-
-def main():
-    sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-    sock.bind(('localhost', 6379))
-    sock.listen()
-    sock.setblocking(False)
-    sel.register(sock, selectors.EVENT_READ, accept)
-
-    while True:
-        for key, _ in sel.select():
-            callback = key.data
-            callback(key.fileobj)
-
-if __name__ == "__main__":
-    main()
-
-
+        elif b'ECHO' in data:
+            # RESP parsing: get the actual argument
+            try:
+                lines = data.split(b'\r\n')
+                if len(lines) >= 5:
+                    echo_msg = lines[4]
+                    length = str(len(echo_msg)).encode()
+                    response = b'$' + length + b'\r\n' + echo_msg + b'\r\n'
+                    conn.sendall(response)
+            except:
+                conn.sendall(b'-Error\r\n')
 
 
 
