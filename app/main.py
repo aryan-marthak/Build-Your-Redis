@@ -1,8 +1,6 @@
 import socket
 
-def parsing(data, conn):
-    if b"PING" in data.upper():
-        conn.sendall(b"+PONG\r\n")
+def parsing(data):
     split = data.split(b"\r\n")
     if split[0].startswith(b"*") and split[2].startswith(b"$"):
         echo = split[2].decode().upper()
@@ -19,10 +17,15 @@ def main():
     while True:
         conn, _ = server_socket.accept()
         data = conn.recv(1024)
-        temp = parsing(data, conn)
-        res = string(temp)
-        conn.sendall(res)
-
+        if b"PING" in data.upper():
+            conn.sendall(b"+PONG\r\n")
+        temp = parsing(data)
+        if temp is not None:
+            res = string(temp)
+            conn.sendall(res)
+        else:
+            conn.sendall(b"-ERR unknown command\r\n")
+        conn.close()
 if __name__ == "__main__":
     main()
 
