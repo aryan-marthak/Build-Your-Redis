@@ -2,10 +2,8 @@ import socket
 
 def parsing(data):
     split = data.split(b"\r\n")
-    if split[0].startswith(b"*") and split[2].startswith(b"$"):
-        echo = split[2].decode().upper()
-        if echo == "ECHO":
-            return split[4]
+    if len(split) > 4 and split[2] == b"ECHO":
+        return split[4]
     return None
 
 def string(words):
