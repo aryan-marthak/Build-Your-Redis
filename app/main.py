@@ -37,7 +37,7 @@ def read(conn):
 
     elif b"GET" in data.upper():
         split = data.split(b"\r\n")
-        if temp1 == split[2]:
+        if temp1 == split[4]:
             res = string(temp2)
             conn.sendall(res)
         else:
