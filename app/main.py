@@ -24,6 +24,18 @@ def read(conn):
         conn.close()
         return
     
+    if b"SET" in data.upper():
+        conn.sendall(b"+OK\r\n")
+        split = data.split()
+        temp1 = split[1]
+        temp2 = split[2]
+
+    if b"GET" in data.upper():
+        split = data.split()
+        if temp1 == split[1]:
+            return string(temp2)
+
+
     if b"PING" in data.upper():
         conn.sendall(b"+PONG\r\n")
     else:
