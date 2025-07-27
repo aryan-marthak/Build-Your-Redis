@@ -1,8 +1,9 @@
 import socket
 import selectors
+import time
 
 sel = selectors.DefaultSelector()
-temp1, temp2 = b"", b""
+temp1, temp2, temp3 = b"", b"", b""
 
 def parsing(data):
     split = data.split(b"\r\n")
@@ -32,12 +33,16 @@ def read(conn):
     elif b"SET" in data.upper():
         conn.sendall(b"+OK\r\n")
         split = data.split(b"\r\n")
+        
         temp1 = split[4]
         temp2 = split[6]
+        temp3 = split[8]
+        time.slpeep(temp3/1000)
+        temp3 = None
 
     elif b"GET" in data.upper():
         split = data.split(b"\r\n")
-        if temp1 == split[4]:
+        if temp1 == split[4] and temp3 is not None:
             res = string(temp2)
             conn.sendall(res)
         else:
