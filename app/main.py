@@ -13,7 +13,7 @@ def parsing(data):
 
 def string(words):
     return b"$" + str(len(words)).encode() + b"\r\n" + words + b"\r\n"
-def string_none():
+
 def accept(sock):
     conn, _ = sock.accept()
     conn.setblocking(False)
