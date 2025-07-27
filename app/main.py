@@ -2,6 +2,7 @@ import socket
 import selectors
 
 sel = selectors.DefaultSelector()
+temp1, temp2 = b"", b""
 
 def parsing(data):
     split = data.split(b"\r\n")
@@ -18,32 +19,35 @@ def accept(sock):
     sel.register(conn, selectors.EVENT_READ, read)
     
 def read(conn):
+    global temp1, temp2
     data = conn.recv(1024)
     if not data:
         sel.unregister(conn)
         conn.close()
         return
     
-    if b"SET" in data.upper():
+    if b"PING" in data.upper():
+        conn.sendall(b"+PONG\r\n")
+    
+    elif b"SET" in data.upper():
         conn.sendall(b"+OK\r\n")
         split = data.split(b"\r\n")
-        global temp1, temp2
         temp1 = split[4]
         temp2 = split[6]
 
-    elif b"PING" in data.upper():
-        conn.sendall(b"+PONG\r\n")
     elif b"GET" in data.upper():
         split = data.split(b"\r\n")
         if temp1 == split[2]:
             res = string(temp2)
             conn.sendall(res)
-        temp = parsing(data)
-        if temp is not None:
-            res = string(temp)
-            conn.sendall(res)
         else:
-            conn.sendall(b"-ERR unknown command\r\n")
+            conn.sendall(b"$-1\r\n")
+    elif data is not None:
+        temp = parsing(data)
+        res = string(temp)
+        conn.sendall(res)
+    else:
+        conn.sendall(b"-ERR unknown command\r\n")
 
 
 def main():
