@@ -20,7 +20,7 @@ def accept(sock):
     sel.register(conn, selectors.EVENT_READ, read)
     
 def read(conn):
-    global temp1, temp2
+    global temp1, temp2, temp3
     data = conn.recv(1024)
     if not data:
         sel.unregister(conn)
