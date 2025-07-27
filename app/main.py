@@ -1,48 +1,30 @@
 import socket
-import selectors
 
-sel = selectors.DefaultSelector()
+def parsing(data, conn):
+    if b"PING" in data.upper():
+        conn.sendall(b"+PONG\r\n")
+    split = data.split(b"\r\n")
+    if split[0].startswith(b"*") and split[2].startswith(b"$"):
+        echo = split[2].decode().upper()
+        if echo == "ECHO":
+            return split[4]
+    return None
 
-def accept(sock):
-    conn, addr = sock.accept()
-    conn.setblocking(False)
-    sel.register(conn, selectors.EVENT_READ, read)
+def string(words):
+    return b"$" + str(len(words)).encode() + b"\r\n" + words + b"\r\n"
 
-def read(conn):
-    try:
+
+def main():
+    server_socket = socket.create_server(("localhost", 6379), reuse_port=True)
+    while True:
+        conn, _ = server_socket.accept()
         data = conn.recv(1024)
-        if not data:
-            sel.unregister(conn)
-            conn.close()
-            return
+        temp = parsing(data, conn)
+        res = string(temp)
+        conn.sendall(res)
 
-        parts = data.split(b'\r\n')
-        if parts[0].startswith(b'*') and parts[2].upper() == b'ECHO':
-            msg = parts[4]
-            resp = f"${len(msg)}\r\n{msg.decode()}\r\n".encode()
-            conn.send(resp)
-        elif parts[0].startswith(b'*') and parts[2].upper() == b'PING':
-            conn.send(b"+PONG\r\n")
-        else:
-            conn.send(b"-ERR unknown command\r\n")
-    except:
-        conn.send(b"-ERR parsing failed\r\n")
-
-sock = socket.socket()
-sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)  # prevents "Address already in use"
-sock.bind(('localhost', 6379))
-sock.listen()
-sock.setblocking(False)
-sel.register(sock, selectors.EVENT_READ, accept)
-
-while True:
-    for key, _ in sel.select():
-        callback = key.data
-        callback(key.fileobj)
-
-
-
-
+if __name__ == "__main__":
+    main()
 
 # import socket  # noqa: F401
 # import selectors
