@@ -19,6 +19,11 @@ def accept(sock):
     
 def read(conn):
     data = conn.recv(1024)
+    if not data:
+        sel.unregister(conn)
+        conn.close()
+        return
+    
     if b"PING" in data.upper():
         conn.sendall(b"+PONG\r\n")
     else:
