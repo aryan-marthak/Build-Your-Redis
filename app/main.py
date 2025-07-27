@@ -38,11 +38,11 @@ def read(conn):
         temp2 = split[6]
         temp3 = split[10]
         time.sleep(int(temp3)/1000)
-        temp3 = None
+        temp3 = time.time() + int(temp3)/1000
 
     elif b"GET" in data.upper():
         split = data.split(b"\r\n")
-        if temp1 == split[4] and temp3 is not None:
+        if temp1 == split[4] and (temp3 is not None or time.time() < temp3):
             res = string(temp2)
             conn.sendall(res)
         else:
