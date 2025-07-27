@@ -37,7 +37,7 @@ def read(conn):
         temp1 = split[4]
         temp2 = split[6]
         temp3 = split[8]
-        time.slpeep(temp3/1000)
+        time.sleep(temp3/1000)
         temp3 = None
 
     elif b"GET" in data.upper():
