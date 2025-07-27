@@ -3,7 +3,7 @@ import selectors
 import time
 
 sel = selectors.DefaultSelector()
-temp1, temp2, temp3 = b"", b"", b""
+temp1, temp2, temp3 = b"", b"", None
 
 def parsing(data):
     split = data.split(b"\r\n")
@@ -13,7 +13,7 @@ def parsing(data):
 
 def string(words):
     return b"$" + str(len(words)).encode() + b"\r\n" + words + b"\r\n"
-
+def string_none():
 def accept(sock):
     conn, _ = sock.accept()
     conn.setblocking(False)
@@ -36,12 +36,11 @@ def read(conn):
         
         temp1 = split[4]
         temp2 = split[6]
-        temp3 = split[10]
-        temp3 = time.time() + int(temp3)/1000
+        temp3 = time.time() + int(split[10])/1000
 
     elif b"GET" in data.upper():
         split = data.split(b"\r\n")
-        if temp1 == split[4] and (temp3 is not None or time.time() < temp3):
+        if temp1 == split[4] and (temp3 is None or time.time() < temp3):
             res = string(temp2)
             conn.sendall(res)
         else:
