@@ -36,7 +36,11 @@ def read(conn):
         
         temp1 = split[4]
         temp2 = split[6]
-        temp3 = time.time() + int(split[10])/1000
+        
+        if len(split) > 10 and split[10].isdigit():
+            temp3 = time.time() + int(split[10])/1000
+        else:
+            temp3 = None
 
     elif b"GET" in data.upper():
         split = data.split(b"\r\n")
