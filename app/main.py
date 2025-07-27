@@ -37,7 +37,6 @@ def read(conn):
         temp1 = split[4]
         temp2 = split[6]
         temp3 = split[10]
-        time.sleep(int(temp3)/1000)
         temp3 = time.time() + int(temp3)/1000
 
     elif b"GET" in data.upper():
