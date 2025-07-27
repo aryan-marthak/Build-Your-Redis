@@ -1,4 +1,7 @@
 import socket
+import selectors
+
+sel = selectors.DefaultSelector()
 
 def parsing(data):
     split = data.split(b"\r\n")
@@ -9,21 +12,34 @@ def parsing(data):
 def string(words):
     return b"$" + str(len(words)).encode() + b"\r\n" + words + b"\r\n"
 
-
-def main():
-    server_socket = socket.create_server(("localhost", 6379), reuse_port=True)
-    while True:
-        conn, _ = server_socket.accept()
-        data = conn.recv(1024)
-        if b"PING" in data.upper():
-            conn.sendall(b"+PONG\r\n")
+def accept(sock):
+    conn, _ = sock.accept()
+    conn.setblocking(False)
+    sel.register(conn, selectors.EVENT_READ, read)
+    
+def read(conn):
+    data = conn.recv(1024)
+    if b"PING" in data.upper():
+        conn.sendall(b"+PONG\r\n")
+    else:
         temp = parsing(data)
         if temp is not None:
             res = string(temp)
             conn.sendall(res)
         else:
             conn.sendall(b"-ERR unknown command\r\n")
-        conn.close()
+
+
+def main():
+    server_socket = socket.create_server(("localhost", 6379), reuse_port=True)
+    server_socket.setblocking(False)
+    sel.register(server_socket, selectors.EVENT_READ, accept)
+    while True:
+        events = sel.select()
+        for key, _ in events:
+            callback = key.data
+            callback(key.fileobj)
+
 if __name__ == "__main__":
     main()
 
