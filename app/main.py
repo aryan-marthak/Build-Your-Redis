@@ -37,8 +37,8 @@ def read(conn):
     else:
         if b"GET" in data.upper():
             split = data.split()
-        if temp1 == split[1]:
-            return string(temp2)
+            if temp1 == split[1]:
+                return string(temp2)
         temp = parsing(data)
         if temp is not None:
             res = string(temp)
