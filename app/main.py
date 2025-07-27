@@ -30,15 +30,15 @@ def read(conn):
         temp1 = split[1]
         temp2 = split[2]
 
-    if b"GET" in data.upper():
-        split = data.split()
-        if temp1 == split[1]:
-            return string(temp2)
 
 
     if b"PING" in data.upper():
         conn.sendall(b"+PONG\r\n")
     else:
+        if b"GET" in data.upper():
+            split = data.split()
+        if temp1 == split[1]:
+            return string(temp2)
         temp = parsing(data)
         if temp is not None:
             res = string(temp)
