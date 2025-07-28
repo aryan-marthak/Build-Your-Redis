@@ -3,7 +3,8 @@ import selectors
 import time
 
 sel = selectors.DefaultSelector()
-dictionary,temp1, temp2, temp3 = {}, b"", b"" , None
+dictionary, temp1, temp2, temp3 = {}, b"", b"" , None
+streams = {}
 
 def parsing(data):
     split = data.split(b"\r\n")
@@ -20,7 +21,7 @@ def accept(sock):
     sel.register(conn, selectors.EVENT_READ, read)
     
 def read(conn):
-    global dictionary, temp3, temp1, temp2
+    global dictionary, temp3, temp1, temp2, streams
     data = conn.recv(1024)
     if not data:
         sel.unregister(conn)
@@ -42,9 +43,32 @@ def read(conn):
             temp3 = time.time() + int(split[10])/1000
         else:
             temp3 = None
+            
+    elif b"XADD" in data.upper():
+        split = data.split(b"\r\n")
+        key = split[4]
+        value = split[6]
+        
+        fields = {}
+        for i in range(8, len(split) - 1, 2):
+            if i + 1 < len(split) and split[i] and split[i + 1]:
+                fields[split[i]] = split[i + 1]
+        
+        if key not in streams:
+            streams[key] = []
+        
+        entry = {'id': value, 'fields': fields}
+        
+        streams[key].append(entry)
+        
+        conn.sendall(string(value))
+        
+    
     elif b"TYPE" in data.upper():
         split = data.split(b"\r\n")
-        if split[4] in dictionary:
+        if key in streams:
+            conn.sendall(b'+stream\r\n')
+        elif split[4] in dictionary:
             conn.sendall(b'+string\r\n')
         else:
             conn.sendall(b"+none\r\n")            
