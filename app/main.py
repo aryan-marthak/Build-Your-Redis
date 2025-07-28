@@ -21,7 +21,7 @@ def accept(sock):
     sel.register(conn, selectors.EVENT_READ, read)
     
 def read(conn):
-    global dictionary, temp3, temp1, temp2, streams, key, value
+    global dictionary, temp3, temp1, temp2, streams
     data = conn.recv(1024)
     if not data:
         sel.unregister(conn)
@@ -46,9 +46,10 @@ def read(conn):
             
     elif b"XADD" in data.upper():
         split = data.split(b"\r\n")
+        global key, value
         key = split[4]
         value = split[6]
-        
+
         fields = {}
         for i in range(8, len(split) - 1, 2):
             if i + 1 < len(split) and split[i] and split[i + 1]:
