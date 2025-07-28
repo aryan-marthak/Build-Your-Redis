@@ -3,7 +3,7 @@ import selectors
 import time
 
 sel = selectors.DefaultSelector()
-dictionary, temp3 = {} , None
+dictionary,temp1, temp2, temp3 = {}, b"", b"" , None
 
 def parsing(data):
     split = data.split(b"\r\n")
@@ -20,7 +20,7 @@ def accept(sock):
     sel.register(conn, selectors.EVENT_READ, read)
     
 def read(conn):
-    global dictionary, temp3
+    global dictionary, temp3, temp1, temp2
     data = conn.recv(1024)
     if not data:
         sel.unregister(conn)
