@@ -48,6 +48,7 @@ def read(conn):
         split = data.split(b"\r\n")
         key = split[4]
         value = split[6]
+        
 
         fields = {}
         for i in range(8, len(split) - 1, 2):
