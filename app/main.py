@@ -3,13 +3,13 @@ import selectors
 import time
 
 sel = selectors.DefaultSelector()
-temp1, temp2, temp3 = b"", b"", None
+dictionary, temp3 = {} , None
 
 def parsing(data):
     split = data.split(b"\r\n")
     if len(split) > 4 and split[2] == b"ECHO":
         return split[4]
-    return None
+    return None 
 
 def string(words):
     return b"$" + str(len(words)).encode() + b"\r\n" + words + b"\r\n"
@@ -36,11 +36,18 @@ def read(conn):
         
         temp1 = split[4]
         temp2 = split[6]
+        dictionary[temp1] = temp2
         
         if len(split) > 10 and split[10].isdigit():
             temp3 = time.time() + int(split[10])/1000
         else:
             temp3 = None
+    elif b"TYPE" in data.upper():
+        split = data.split(b"\r\n")
+        if split[5] in dictionary:
+            conn.sendall(b'+string\r\n')
+        else:
+            conn.sendall(b"+none\r\n")            
 
     elif b"GET" in data.upper():
         split = data.split(b"\r\n")
