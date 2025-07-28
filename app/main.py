@@ -46,7 +46,6 @@ def read(conn):
             
     elif b"XADD" in data.upper():
         split = data.split(b"\r\n")
-        global key, value
         key = split[4]
         value = split[6]
 
@@ -67,7 +66,7 @@ def read(conn):
     
     elif b"TYPE" in data.upper():
         split = data.split(b"\r\n")
-        if key in streams:
+        if split[4] in streams:
             conn.sendall(b'+stream\r\n')
         elif split[4] in dictionary:
             conn.sendall(b'+string\r\n')
