@@ -48,10 +48,35 @@ def read(conn):
         split = data.split(b"\r\n")
         key = split[4]
         value = split[6]
+        
+        if b"*" in value:
+            divide = value.split(b"-")
+            if divide[1] == b"*":
+                last = -1
+                if key in streams and streams[key]:
+                    for enter in streams[key]:
+                        a, b = entry['id'].split(b"-")
+                        if a == divide[0]:
+                            last = max(last, int(b))
+                            
+                    if divide[0] == b"0" and last == -1:
+                        New = 1
+                    else:
+                        New = last + 1
+                        
+                else:
+                    if divide[0] == b"0" and last == -1:
+                        New = 1
+                    else:
+                        New = 0
+                value = divide[0] + b"-" + str(New).encode()
+                
+        
         comp = value.split(b"-")
         if comp[0] == b"0" and comp[1] == b"0":
             conn.sendall(b"-ERR The ID specified in XADD must be greater than 0-0\r\n")
             return        
+
         
         if key in streams:
             last = streams[key][-1]
