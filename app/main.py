@@ -44,7 +44,7 @@ def read(conn):
             temp3 = None
     elif b"TYPE" in data.upper():
         split = data.split(b"\r\n")
-        if split[5] in dictionary:
+        if split[4] in dictionary:
             conn.sendall(b'+string\r\n')
         else:
             conn.sendall(b"+none\r\n")            
