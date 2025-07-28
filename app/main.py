@@ -56,7 +56,7 @@ def read(conn):
         if key in streams:
             last = streams[key][-1]
             temp = last['id'].split(b"-")
-            if comp[0] < temp[0] or (comp(0) == temp(0) and comp[1] <= temp[1]):
+            if comp[0] < temp[0] or (comp[0] == temp[0] and comp[1] <= temp[1]):
                 conn.sendall(b"-ERR The ID specified in XADD is equal or smaller than the target stream top item\r\n")
                 return
 
