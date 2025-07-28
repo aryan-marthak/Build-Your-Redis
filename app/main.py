@@ -49,6 +49,9 @@ def read(conn):
         key = split[4]
         value = split[6]
         
+        if value == b"*":
+            conn.sendall(b"$15\r\n1526919030474-0\r\n")
+        
         if b"*" in value:
             divide = value.split(b"-")
             if divide[1] == b"*":
