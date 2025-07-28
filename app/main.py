@@ -55,7 +55,7 @@ def read(conn):
                 last = -1
                 if key in streams and streams[key]:
                     for enter in streams[key]:
-                        a, b = entry['id'].split(b"-")
+                        a, b = enter['id'].split(b"-")
                         if a == divide[0]:
                             last = max(last, int(b))
                             
