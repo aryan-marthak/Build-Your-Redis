@@ -50,8 +50,22 @@ def read(conn):
         value = split[6]
         
         if value == b"*":
-            conn.sendall(b"$15\r\n1526919030474-0\r\n")
-        
+            curr_timestamps = int(time.time() * 1000)
+            carry = 0
+            
+            if key in streams and streams[key]:
+                final_entry = streams[key][-1]
+                parts = final_entry['id'].split(b"-")
+                timestamp = int(parts[0])
+                
+                if curr_timestamps == timestamp:
+                    carry = int(parts[1]) + 1
+                elif curr_timestamps < timestamp:
+                    curr_timestamps = timestamp
+                    carry = int(parts[1]) + 1
+            
+            value = str(curr_timestamps).encode() + b"-" + str(carry).encode()
+                
         if b"*" in value:
             divide = value.split(b"-")
             if divide[1] == b"*":
