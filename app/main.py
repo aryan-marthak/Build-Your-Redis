@@ -106,7 +106,7 @@ def read(conn):
                 return
 
         fields = {}
-        for i in range(8, len(split) - 1, 2):
+        for i in range(8, len(split), 2):
             if i + 1 < len(split) and split[i] and split[i + 1]:
                 fields[split[i]] = split[i + 1]
         
@@ -130,28 +130,26 @@ def read(conn):
         if b"-" in xrange_end:
             xrange_end = xrange_end + b"-9999999999"
             
-        result = b"*0\r\n"
-        count = 0
-        if xrange_var in streams and streams[xrange_var]:
-            for p in streams[xrange_var]:
-                id = p['id']
-                if id >= xrange_start and id <= xrange_end:
-                    count += 1
-        result = b"*" + str(count).encode() + b"\r\n"
+        entries = []
         
         if xrange_var in streams and streams[xrange_var]:
             for p in streams[xrange_var]:
                 id = p['id']
                 if id >= xrange_start and id <= xrange_end:
-                    result += b"*2\r\n"
-                    result += string(id)
+                    entries.append(p)
                     
-                    fields_count = len(p['fields']) * 2
-                    result += b"*" + str(fields_count).encode() + b"\r\n"
-                    
-                    for fkey, fvalue in p['fields'].items():
-                        result += string(fkey)
-                        result += string(fvalue)
+        result = b"*" + str(len(entries)).encode() + b"\r\n"
+                            
+        for p in entries:
+            result += b"*2\r\n"
+            result += string(p['id'])
+            
+            fields_count = len(p['fields']) * 2
+            result += b"*" + str(fields_count).encode() + b"\r\n"
+            
+            for fkey, fval in p['fields'].items():
+                result += string(fkey)
+                result += string(fval)
         conn.sendall(result)
     
     elif b"TYPE" in data.upper():
