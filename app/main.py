@@ -106,9 +106,9 @@ def read(conn):
                 return
 
         fields = {}
-        for i in range(8, len(split), 2):
-            if i + 1 < len(split) and split[i] and split[i + 1]:
-                fields[split[i]] = split[i + 1]
+        for i in range(8, len(split), 4):
+            if i + 2 < len(split) and split[i] and split[i + 2]:
+                fields[split[i + 1]] = split[i + 3]
         
         if key not in streams:
             streams[key] = []
@@ -125,9 +125,9 @@ def read(conn):
         xrange_start = xrange_split[6]
         xrange_end = xrange_split[8]
         
-        if b"-" in xrange_start:
+        if b"-" not in xrange_start:
             xrange_start = xrange_start + b"-0"
-        if b"-" in xrange_end:
+        if b"-" not in xrange_end:
             xrange_end = xrange_end + b"-9999999999"
             
         entries = []
