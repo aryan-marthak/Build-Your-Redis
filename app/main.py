@@ -127,7 +127,9 @@ def read(conn):
         
         if b"-" not in xrange_start:
             xrange_start = xrange_start + b"-0"
-        if b"-" not in xrange_end or b"+" in xrange_end:
+        if xrange_end == b"+":
+            xrange_end = b"9999999999-9999999999"
+        elif b"-" not in xrange_end:
             xrange_end = xrange_end + b"-9999999999"
             
         entries = []
