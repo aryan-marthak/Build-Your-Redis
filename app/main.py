@@ -156,19 +156,36 @@ def read(conn):
     
     elif b"XREAD" in data.upper():
         xread_split = data.split(b"\r\n")
-        xread_var = xread_split[4]
-        xread_time = xread_split[6]
-        result = b""
+        xread_var = xread_split[6]
+        xread_time = xread_split[8]
+        
+        if b"-" not in xread_time:
+            xread_time = xread_time + b"-0"
+        
+        matched = []
+        
         if xread_var in streams and streams[xread_var]:
             for p in streams[xread_var]:
                 id = p['id']
-                if id == xread_time:
-                    result = b"*" + str(1).encode() + b"\r\n" + b"*2\r\n" + string(p["id"]) + b"*" + str(len(p['fields']) * 2).encode() + b"\r\n"
+                if id > xread_time:
+                    matched.append(p)
+                
+        if matched:
+            result = b"*1\r\n"
+            result += b"*2\r\n"
+            result += string(xread_var)
+            result += b"*" + str(len(matched)).encode() + b"\r\n"
             
-                    for fkey, fval in p['fields'].items():
-                        result += string(fkey)
-                        result += string(fval)
-                    conn.sendall(result)
+            for q in matched:
+                result += b"*2\r\n"
+                result += string(q['id'])
+                
+                for fkey, fval in p['fields'].items():
+                    result += string(fkey)
+                    result += string(fval)
+        else:
+            result = b"*0\r\n"
+        conn.sendall(result)
     
     elif b"TYPE" in data.upper():
         split = data.split(b"\r\n")
