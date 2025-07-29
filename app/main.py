@@ -180,6 +180,9 @@ def read(conn):
                 result += b"*2\r\n"
                 result += string(q['id'])
                 
+                count = len(q['fields']) * 2
+                result += b"*" + str(count).encode + b"\r\n"
+                
                 for fkey, fval in p['fields'].items():
                     result += string(fkey)
                     result += string(fval)
