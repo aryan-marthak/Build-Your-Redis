@@ -107,9 +107,12 @@ def read(conn):
 
         fields = {}
         for i in range(8, len(split), 4):
-            if i + 2 < len(split) and split[i] and split[i + 2]:
-                fields[split[i + 1]] = split[i + 3]
-        
+            if i + 2 < len(split):
+                fname = split[i]
+                fval = split[i + 2]
+                if fname and fval:
+                    fields[fname] = fval
+                            
         if key not in streams:
             streams[key] = []
         
