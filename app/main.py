@@ -42,10 +42,7 @@ def read(conn):
         if len(split) > 10 and split[10].isdigit():
             temp3 = time.time() + int(split[10])/1000
         else:
-            temp3 = None
-            
-            
-        
+            temp3 = None      
             
     elif b"XADD" in data.upper():
         split = data.split(b"\r\n")
@@ -130,7 +127,7 @@ def read(conn):
         
         if b"-" not in xrange_start:
             xrange_start = xrange_start + b"-0"
-        if b"-" not in xrange_end:
+        if b"-" not in xrange_end or b"+" in xrange_end:
             xrange_end = xrange_end + b"-9999999999"
             
         entries = []
