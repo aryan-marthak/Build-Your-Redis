@@ -154,6 +154,22 @@ def read(conn):
                 result += string(fval)
         conn.sendall(result)
     
+    elif b"XREAD" in data.upper():
+        xread_split = data.split(b"\r\n")
+        xread_var = xread_split[4]
+        xread_time = xread_split[6]
+        result = b""
+        if xread_var in streams and streams[xread_var]:
+            for p in streams[xread_var]:
+                id = p['id']
+                if id == xread_time:
+                    result = b"*" + str(1).encode() + b"\r\n" + b"*2\r\n" + string(p["id"]) + b"*" + str(len(p['fields']) * 2).encode() + b"\r\n"
+            
+                    for fkey, fval in p['fields'].items():
+                        result += string(fkey)
+                        result += string(fval)
+                    conn.sendall(result)
+    
     elif b"TYPE" in data.upper():
         split = data.split(b"\r\n")
         if split[4] in streams:
