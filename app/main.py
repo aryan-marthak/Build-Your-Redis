@@ -44,6 +44,9 @@ def read(conn):
         else:
             temp3 = None
             
+            
+        
+            
     elif b"XADD" in data.upper():
         split = data.split(b"\r\n")
         key = split[4]
@@ -116,6 +119,40 @@ def read(conn):
         
         conn.sendall(string(value))
         
+    elif b"XRANGE" in data.upper():
+        xrange_split = data.split(b"\r\n")
+        xrange_var = xrange_split[4]
+        xrange_start = xrange_split[6]
+        xrange_end = xrange_split[8]
+        
+        if b"-" in xrange_start:
+            xrange_start = xrange_start + b"-0"
+        if b"-" in xrange_end:
+            xrange_end = xrange_end + b"-9999999999"
+            
+        result = b"*0\r\n"
+        count = 0
+        if xrange_var in streams and streams[xrange_var]:
+            for p in streams[xrange_var]:
+                id = p['id']
+                if id >= xrange_start and id <= xrange_end:
+                    count += 1
+        result = b"*" + str(count).encode() + b"\r\n"
+        
+        if xrange_var in streams and streams[xrange_var]:
+            for p in streams[xrange_var]:
+                id = p['id']
+                if id >= xrange_start and id <= xrange_end:
+                    result += b"*2\r\n"
+                    result += string(id)
+                    
+                    fields_count = len(p['fields']) * 2
+                    result += b"*" + str(fields_count).encode() + b"\r\n"
+                    
+                    for fkey, fvalue in p['fields'].items():
+                        result += string(fkey)
+                        result += string(fvalue)
+        conn.sendall(result)
     
     elif b"TYPE" in data.upper():
         split = data.split(b"\r\n")
