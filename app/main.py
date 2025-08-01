@@ -165,7 +165,7 @@ def read(conn):
         result = b"*" + str(len(stream_keys)).encode() + b"\r\n"
         
         for k, i in zip(stream_keys, stream_ids):
-            if b"-" in i:
+            if b"-" not in i:
                 i += b"-0"
                 
             matched = []
