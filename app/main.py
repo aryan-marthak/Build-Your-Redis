@@ -156,39 +156,72 @@ def read(conn):
     
     elif b"XREAD" in data.upper():
         xread_split = data.split(b"\r\n")
-        xread_var = xread_split[6]
-        xread_time = xread_split[8]
         
-        if b"-" not in xread_time:
-            xread_time = xread_time + b"-0"
+        stream_start = xread_split.index(b"streams") + 1
+        total = (len(xread_split) - stream_start) // 2
+        stream_keys = xread_split[stream_start : stream_start + total]
+        stream_ids = xread_split[stream_start + total : stream_start + 2*total]
         
-        matched = []
+        result = b"*" + str(len(stream_keys)).encode() + b"\r\n"
         
-        if xread_var in streams and streams[xread_var]:
-            for p in streams[xread_var]:
-                id = p['id']
-                if id > xread_time:
-                    matched.append(p)
+        for k, i in zip(stream_keys, stream_ids):
+            if b"-" in i:
+                i += b"-0"
                 
-        if matched:
-            result = b"*1\r\n"
+            matched = []
+            if k in streams:
+                for enter in streams[k]:
+                    if enter["id"] > i:
+                        matched.append(enter)
+            
             result += b"*2\r\n"
-            result += string(xread_var)
+            result += string(k)
             result += b"*" + str(len(matched)).encode() + b"\r\n"
             
-            for q in matched:
+            for entry in matched:
                 result += b"*2\r\n"
-                result += string(q['id'])
+                result += string(entry['id'])
                 
-                count = len(q['fields']) * 2
-                result += b"*" + str(count).encode() + b"\r\n"
-                
-                for fkey, fval in q['fields'].items():
-                    result += string(fkey)
-                    result += string(fval)
-        else:
-            result = b"*0\r\n"
+                fields = entry["fields"]
+                result += b"*" + str(len(fields) * 2).encode() + b"\r\n"
+                for k, v in fields.items():
+                    result += string(k)
+                    result += string(v)
         conn.sendall(result)
+        
+        # xread_var = xread_split[6]
+        # xread_time = xread_split[8]
+        
+        # if b"-" not in xread_time:
+        #     xread_time = xread_time + b"-0"
+        
+        # matched = []
+        
+        # if xread_var in streams and streams[xread_var]:
+        #     for p in streams[xread_var]:
+        #         id = p['id']
+        #         if id > xread_time:
+        #             matched.append(p)
+                
+        # if matched:
+        #     result = b"*1\r\n"
+        #     result += b"*2\r\n"
+        #     result += string(xread_var)
+        #     result += b"*" + str(len(matched)).encode() + b"\r\n"
+            
+        #     for q in matched:
+        #         result += b"*2\r\n"
+        #         result += string(q['id'])
+                
+        #         count = len(q['fields']) * 2
+        #         result += b"*" + str(count).encode() + b"\r\n"
+                
+        #         for fkey, fval in q['fields'].items():
+        #             result += string(fkey)
+        #             result += string(fval)
+        # else:
+        #     result = b"*0\r\n"
+        # conn.sendall(result)
     
     elif b"TYPE" in data.upper():
         split = data.split(b"\r\n")
