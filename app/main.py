@@ -157,43 +157,50 @@ def read(conn):
     elif b"XREAD" in data.upper():
         xread_split = data.split(b"\r\n")
         
+        
+        if b"BLOCK" in xread_split:
+            block_time = int(time.time()) * 1000 + int(xread_split[6])
+            
+        
         stream_start = xread_split.index(b"streams") + 1
         total = (len(xread_split) - stream_start) // 2
         stream_keys = xread_split[stream_start : stream_start + total]
         stream_ids = xread_split[stream_start + total : stream_start + 2*total]
         
-        matches = []
+        if int(time.time()) * 1000 > block_time:
+            conn.sendall(b"$-1\r\n")
+        else:
+            matches = []
 
-        for k, i in zip(stream_keys, stream_ids):
-            if b"-" not in i:
-                i += b"-0"
-        
-            matched = []
-            if k in streams:
-                for enter in streams[k]:
-                    if enter["id"] > i:
-                        matched.append(enter)
-        
-            if matched:
-                stream_result = b"*2\r\n"
-                stream_result += string(k)
-                stream_result += b"*" + str(len(matched)).encode() + b"\r\n"
-        
-                for entry in matched:
-                    stream_result += b"*2\r\n"
-                    stream_result += string(entry['id'])
-        
-                    fields = entry["fields"]
-                    stream_result += b"*" + str(len(fields) * 2).encode() + b"\r\n"
-                    for fk, fv in fields.items():
-                        stream_result += string(fk)
-                        stream_result += string(fv)
-        
-                matches.append(stream_result)
-        
-        result = b"*" + str(len(matches)).encode() + b"\r\n" + b"".join(matches)
-        conn.sendall(result)
-
+            for k, i in zip(stream_keys, stream_ids):
+                if b"-" not in i:
+                    i += b"-0"
+    
+                matched = []
+                if k in streams:
+                    for enter in streams[k]:
+                        if enter["id"] > i:
+                            matched.append(enter)
+    
+                if matched:
+                    stream_result = b"*2\r\n"
+                    stream_result += string(k)
+                    stream_result += b"*" + str(len(matched)).encode() + b"\r\n"
+    
+                    for entry in matched:
+                        stream_result += b"*2\r\n"
+                        stream_result += string(entry['id'])
+    
+                        fields = entry["fields"]
+                        stream_result += b"*" + str(len(fields) * 2).encode() + b"\r\n"
+                        for fk, fv in fields.items():
+                            stream_result += string(fk)
+                            stream_result += string(fv)
+    
+                    matches.append(stream_result)
+    
+            result = b"*" + str(len(matches)).encode() + b"\r\n" + b"".join(matches)
+            conn.sendall(result)
         
     
     elif b"TYPE" in data.upper():
