@@ -157,6 +157,7 @@ def read(conn):
     elif b"XREAD" in data.upper():
         xread_split = data.split(b"\r\n")
         
+        block_time = 0
         
         if b"BLOCK" in xread_split:
             block_time = int(time.time()) * 1000 + int(xread_split[6])
