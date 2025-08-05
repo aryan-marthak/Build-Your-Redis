@@ -129,7 +129,16 @@ def read(conn):
             if key in stream_keys:
                 stream_index = stream_keys.index(key)
                 waiting_id = stream_ids[stream_index]
-                if value > waiting_id:
+                
+                # Ensure both IDs have proper format for comparison
+                if b"-" not in waiting_id:
+                    waiting_id += b"-0"
+                if b"-" not in value:
+                    value_cmp = value + b"-0"
+                else:
+                    value_cmp = value
+                
+                if value_cmp > waiting_id:
                     clients_to_remove.append(client_conn)
                     
                     # Send XREAD response inline
@@ -156,11 +165,12 @@ def read(conn):
                                     stream_result += string(fv)
                             matches.append(stream_result)
                     
-                    result = b"*" + str(len(matches)).encode() + b"\r\n" + b"".join(matches)
-                    try:
-                        client_conn.sendall(result)
-                    except:
-                        pass
+                    if matches:  # Only send if we have matches
+                        result = b"*" + str(len(matches)).encode() + b"\r\n" + b"".join(matches)
+                        try:
+                            client_conn.sendall(result)
+                        except:
+                            pass
         
         # Remove clients after iteration to avoid modifying dict during iteration
         for client_conn in clients_to_remove:
