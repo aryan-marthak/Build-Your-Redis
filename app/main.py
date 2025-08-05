@@ -124,7 +124,7 @@ def read(conn):
         
         # Check blocking clients inline
         clients_to_remove = []
-        for client_conn, block_info in blocking_clients.items():
+        for client_conn, block_info in list(blocking_clients.items()):
             expire_time, stream_keys, stream_ids = block_info
             if key in stream_keys:
                 stream_index = stream_keys.index(key)
@@ -141,36 +141,35 @@ def read(conn):
                 if value_cmp > waiting_id:
                     clients_to_remove.append(client_conn)
                     
-                    # Send XREAD response inline
+                    # Send XREAD response inline - use the same logic as non-blocking XREAD
                     matches = []
                     for k, i in zip(stream_keys, stream_ids):
                         if b"-" not in i:
                             i += b"-0"
                         matched = []
                         if k in streams:
-                            for enter in streams[k]:
-                                if enter["id"] > i:
-                                    matched.append(enter)
+                            for stream_entry in streams[k]:
+                                if stream_entry["id"] > i:
+                                    matched.append(stream_entry)
                         if matched:
                             stream_result = b"*2\r\n"
                             stream_result += string(k)
                             stream_result += b"*" + str(len(matched)).encode() + b"\r\n"
-                            for entry_item in matched:
+                            for stream_entry in matched:
                                 stream_result += b"*2\r\n"
-                                stream_result += string(entry_item['id'])
-                                entry_fields = entry_item["fields"]
-                                stream_result += b"*" + str(len(entry_fields) * 2).encode() + b"\r\n"
-                                for fk, fv in entry_fields.items():
-                                    stream_result += string(fk)
-                                    stream_result += string(fv)
+                                stream_result += string(stream_entry['id'])
+                                stream_fields = stream_entry["fields"]
+                                stream_result += b"*" + str(len(stream_fields) * 2).encode() + b"\r\n"
+                                for field_key, field_val in stream_fields.items():
+                                    stream_result += string(field_key)
+                                    stream_result += string(field_val)
                             matches.append(stream_result)
                     
-                    if matches:  # Only send if we have matches
-                        result = b"*" + str(len(matches)).encode() + b"\r\n" + b"".join(matches)
-                        try:
-                            client_conn.sendall(result)
-                        except:
-                            pass
+                    result = b"*" + str(len(matches)).encode() + b"\r\n" + b"".join(matches)
+                    try:
+                        client_conn.sendall(result)
+                    except:
+                        pass
         
         # Remove clients after iteration to avoid modifying dict during iteration
         for client_conn in clients_to_remove:
@@ -269,6 +268,9 @@ def read(conn):
                 # Block the client
                 expire_time = time.time() + (timeout_ms / 1000.0) if timeout_ms > 0 else time.time() + 86400
                 blocking_clients[conn] = (expire_time, stream_keys, stream_ids)
+                # Debug: print that we're blocking this client
+                print(f"DEBUG: Blocking client for streams {stream_keys} with IDs {stream_ids}")
+                print(f"DEBUG: Current blocking_clients count: {len(blocking_clients)}")
         else:
             # Non-blocking XREAD - original logic
             stream_start = xread_split.index(b"streams") + 1
