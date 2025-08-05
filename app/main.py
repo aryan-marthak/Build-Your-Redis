@@ -123,13 +123,14 @@ def read(conn):
         conn.sendall(string(value))
         
         # Check blocking clients inline
-        for client_conn, block_info in list(blocking_clients.items()):
+        clients_to_remove = []
+        for client_conn, block_info in blocking_clients.items():
             expire_time, stream_keys, stream_ids = block_info
             if key in stream_keys:
                 stream_index = stream_keys.index(key)
                 waiting_id = stream_ids[stream_index]
                 if value > waiting_id:
-                    del blocking_clients[client_conn]
+                    clients_to_remove.append(client_conn)
                     
                     # Send XREAD response inline
                     matches = []
@@ -145,20 +146,26 @@ def read(conn):
                             stream_result = b"*2\r\n"
                             stream_result += string(k)
                             stream_result += b"*" + str(len(matched)).encode() + b"\r\n"
-                            for entry in matched:
+                            for entry_item in matched:
                                 stream_result += b"*2\r\n"
-                                stream_result += string(entry['id'])
-                                fields = entry["fields"]
-                                stream_result += b"*" + str(len(fields) * 2).encode() + b"\r\n"
-                                for fk, fv in fields.items():
+                                stream_result += string(entry_item['id'])
+                                entry_fields = entry_item["fields"]
+                                stream_result += b"*" + str(len(entry_fields) * 2).encode() + b"\r\n"
+                                for fk, fv in entry_fields.items():
                                     stream_result += string(fk)
                                     stream_result += string(fv)
                             matches.append(stream_result)
+                    
                     result = b"*" + str(len(matches)).encode() + b"\r\n" + b"".join(matches)
                     try:
                         client_conn.sendall(result)
                     except:
                         pass
+        
+        # Remove clients after iteration to avoid modifying dict during iteration
+        for client_conn in clients_to_remove:
+            if client_conn in blocking_clients:
+                del blocking_clients[client_conn]
         
     elif b"XRANGE" in data.upper():
         xrange_split = data.split(b"\r\n")
@@ -326,7 +333,6 @@ def main():
 
 if __name__ == "__main__":
     main()
-    
     
         # xread_var = xread_split[6]
         # xread_time = xread_split[8]
