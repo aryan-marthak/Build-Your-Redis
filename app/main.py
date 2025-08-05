@@ -5,6 +5,7 @@ import time
 sel = selectors.DefaultSelector()
 dictionary, temp1, temp2, temp3 = {}, b"", b"" , None
 streams = {}
+blocking_clients = {}  # Store blocking XREAD clients
 
 def parsing(data):
     split = data.split(b"\r\n")
@@ -26,6 +27,8 @@ def read(conn):
     if not data:
         sel.unregister(conn)
         conn.close()
+        if conn in blocking_clients:
+            del blocking_clients[conn]
         return
     
     if b"PING" in data.upper():
@@ -119,6 +122,44 @@ def read(conn):
         
         conn.sendall(string(value))
         
+        # Check blocking clients inline
+        for client_conn, block_info in list(blocking_clients.items()):
+            expire_time, stream_keys, stream_ids = block_info
+            if key in stream_keys:
+                stream_index = stream_keys.index(key)
+                waiting_id = stream_ids[stream_index]
+                if value > waiting_id:
+                    del blocking_clients[client_conn]
+                    
+                    # Send XREAD response inline
+                    matches = []
+                    for k, i in zip(stream_keys, stream_ids):
+                        if b"-" not in i:
+                            i += b"-0"
+                        matched = []
+                        if k in streams:
+                            for enter in streams[k]:
+                                if enter["id"] > i:
+                                    matched.append(enter)
+                        if matched:
+                            stream_result = b"*2\r\n"
+                            stream_result += string(k)
+                            stream_result += b"*" + str(len(matched)).encode() + b"\r\n"
+                            for entry in matched:
+                                stream_result += b"*2\r\n"
+                                stream_result += string(entry['id'])
+                                fields = entry["fields"]
+                                stream_result += b"*" + str(len(fields) * 2).encode() + b"\r\n"
+                                for fk, fv in fields.items():
+                                    stream_result += string(fk)
+                                    stream_result += string(fv)
+                            matches.append(stream_result)
+                    result = b"*" + str(len(matches)).encode() + b"\r\n" + b"".join(matches)
+                    try:
+                        client_conn.sendall(result)
+                    except:
+                        pass
+        
     elif b"XRANGE" in data.upper():
         xrange_split = data.split(b"\r\n")
         xrange_var = xrange_split[4]
@@ -158,46 +199,96 @@ def read(conn):
         xread_split = data.split(b"\r\n")
         
         if b"BLOCK" in xread_split:
-            conn.sendall(b"$-1\r\n")
-            return
-        
-        stream_start = xread_split.index(b"streams") + 1
-        total = (len(xread_split) - stream_start) // 2
-        stream_keys = xread_split[stream_start : stream_start + total]
-        stream_ids = xread_split[stream_start + total : stream_start + 2*total]
-        
-        matches = []
+            # Check for expired blocking clients first
+            current_time = time.time()
+            for client_conn, block_info in list(blocking_clients.items()):
+                expire_time, _, _ = block_info
+                if current_time >= expire_time:
+                    del blocking_clients[client_conn]
+                    try:
+                        client_conn.sendall(b"$-1\r\n")
+                    except:
+                        pass
+            
+            # Find timeout value after BLOCK
+            block_idx = xread_split.index(b"BLOCK")
+            timeout_ms = int(xread_split[block_idx + 1])
+            
+            # Find streams section
+            stream_start = xread_split.index(b"streams") + 1
+            total = (len(xread_split) - stream_start) // 2
+            stream_keys = xread_split[stream_start : stream_start + total]
+            stream_ids = xread_split[stream_start + total : stream_start + 2*total]
+            
+            # Check if data already exists
+            matches = []
+            for k, i in zip(stream_keys, stream_ids):
+                if b"-" not in i:
+                    i += b"-0"
+                matched = []
+                if k in streams:
+                    for enter in streams[k]:
+                        if enter["id"] > i:
+                            matched.append(enter)
+                if matched:
+                    stream_result = b"*2\r\n"
+                    stream_result += string(k)
+                    stream_result += b"*" + str(len(matched)).encode() + b"\r\n"
+                    for entry in matched:
+                        stream_result += b"*2\r\n"
+                        stream_result += string(entry['id'])
+                        fields = entry["fields"]
+                        stream_result += b"*" + str(len(fields) * 2).encode() + b"\r\n"
+                        for fk, fv in fields.items():
+                            stream_result += string(fk)
+                            stream_result += string(fv)
+                    matches.append(stream_result)
+            
+            if matches:
+                # Send immediate response
+                result = b"*" + str(len(matches)).encode() + b"\r\n" + b"".join(matches)
+                conn.sendall(result)
+            else:
+                # Block the client
+                expire_time = time.time() + (timeout_ms / 1000.0) if timeout_ms > 0 else time.time() + 86400
+                blocking_clients[conn] = (expire_time, stream_keys, stream_ids)
+        else:
+            # Non-blocking XREAD - original logic
+            stream_start = xread_split.index(b"streams") + 1
+            total = (len(xread_split) - stream_start) // 2
+            stream_keys = xread_split[stream_start : stream_start + total]
+            stream_ids = xread_split[stream_start + total : stream_start + 2*total]
+            
+            matches = []
+            for k, i in zip(stream_keys, stream_ids):
+                if b"-" not in i:
+                    i += b"-0"
 
-        for k, i in zip(stream_keys, stream_ids):
-            if b"-" not in i:
-                i += b"-0"
+                matched = []
+                if k in streams:
+                    for enter in streams[k]:
+                        if enter["id"] > i:
+                            matched.append(enter)
 
-            matched = []
-            if k in streams:
-                for enter in streams[k]:
-                    if enter["id"] > i:
-                        matched.append(enter)
+                if matched:
+                    stream_result = b"*2\r\n"
+                    stream_result += string(k)
+                    stream_result += b"*" + str(len(matched)).encode() + b"\r\n"
 
-            if matched:
-                stream_result = b"*2\r\n"
-                stream_result += string(k)
-                stream_result += b"*" + str(len(matched)).encode() + b"\r\n"
+                    for entry in matched:
+                        stream_result += b"*2\r\n"
+                        stream_result += string(entry['id'])
 
-                for entry in matched:
-                    stream_result += b"*2\r\n"
-                    stream_result += string(entry['id'])
+                        fields = entry["fields"]
+                        stream_result += b"*" + str(len(fields) * 2).encode() + b"\r\n"
+                        for fk, fv in fields.items():
+                            stream_result += string(fk)
+                            stream_result += string(fv)
 
-                    fields = entry["fields"]
-                    stream_result += b"*" + str(len(fields) * 2).encode() + b"\r\n"
-                    for fk, fv in fields.items():
-                        stream_result += string(fk)
-                        stream_result += string(fv)
+                    matches.append(stream_result)
 
-                matches.append(stream_result)
-
-        result = b"*" + str(len(matches)).encode() + b"\r\n" + b"".join(matches)
-        conn.sendall(result)
-        
+            result = b"*" + str(len(matches)).encode() + b"\r\n" + b"".join(matches)
+            conn.sendall(result)
     
     elif b"TYPE" in data.upper():
         split = data.split(b"\r\n")
@@ -228,7 +319,7 @@ def main():
     server_socket.setblocking(False)
     sel.register(server_socket, selectors.EVENT_READ, accept)
     while True:
-        events = sel.select()
+        events = sel.select(timeout=0.1)
         for key, _ in events:
             callback = key.data
             callback(key.fileobj)
