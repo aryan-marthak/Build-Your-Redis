@@ -284,28 +284,9 @@ def read(conn):
                 result = b"*" + str(len(matches)).encode() + b"\r\n" + b"".join(matches)
                 conn.sendall(result)
             else:
-                # Block the client
+                # Block the client - store it and let XADD handle the response
                 expire_time = time.time() + (timeout_ms / 1000.0) if timeout_ms > 0 else time.time() + 86400
                 blocking_clients[conn] = (expire_time, stream_keys, stream_ids)
-                
-                # Handle timeout in this block - check periodically for expired clients
-                start_time = time.time()
-                while conn in blocking_clients and (time.time() - start_time) < (timeout_ms / 1000.0):
-                    # Process other events while waiting
-                    events = sel.select(timeout=0.1)
-                    for key, _ in events:
-                        if key.fileobj != conn:  # Don't process the blocking client itself
-                            callback = key.data
-                            callback(key.fileobj)
-                    
-                    # Check if this client was unblocked by XADD
-                    if conn not in blocking_clients:
-                        break
-                
-                # If still blocking after timeout, send timeout response
-                if conn in blocking_clients:
-                    del blocking_clients[conn]
-                    conn.sendall(b"$-1\r\n")
         else:
             # Non-blocking XREAD
             stream_start = xread_split.index(b"streams") + 1
