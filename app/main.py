@@ -16,6 +16,8 @@ def parsing(data):
 def string(words):
     return b"$" + str(len(words)).encode() + b"\r\n" + words + b"\r\n"
 
+
+
 def accept(sock):
     conn, _ = sock.accept()
     conn.setblocking(False)
@@ -133,12 +135,19 @@ def read(conn):
                 # Ensure both IDs have proper format for comparison
                 if b"-" not in waiting_id:
                     waiting_id += b"-0"
-                if b"-" not in value:
-                    value_cmp = value + b"-0"
-                else:
-                    value_cmp = value
+                value_cmp = value
+                if b"-" not in value_cmp:
+                    value_cmp += b"-0"
                 
-                if value_cmp > waiting_id:
+                # Compare IDs properly
+                waiting_parts = waiting_id.split(b"-")
+                value_parts = value_cmp.split(b"-")
+                waiting_timestamp, waiting_seq = int(waiting_parts[0]), int(waiting_parts[1])
+                value_timestamp, value_seq = int(value_parts[0]), int(value_parts[1])
+                
+                is_greater = (value_timestamp > waiting_timestamp) or (value_timestamp == waiting_timestamp and value_seq > waiting_seq)
+                
+                if is_greater:
                     clients_to_remove.append(client_conn)
                     
                     # Send XREAD response inline - use the same logic as non-blocking XREAD
@@ -149,7 +158,17 @@ def read(conn):
                         matched = []
                         if k in streams:
                             for stream_entry in streams[k]:
-                                if stream_entry["id"] > i:
+                                entry_id = stream_entry["id"]
+                                if b"-" not in entry_id:
+                                    entry_id += b"-0"
+                                
+                                # Compare entry ID with waiting ID
+                                entry_parts = entry_id.split(b"-")
+                                i_parts = i.split(b"-")
+                                entry_timestamp, entry_seq = int(entry_parts[0]), int(entry_parts[1])
+                                i_timestamp, i_seq = int(i_parts[0]), int(i_parts[1])
+                                
+                                if (entry_timestamp > i_timestamp) or (entry_timestamp == i_timestamp and entry_seq > i_seq):
                                     matched.append(stream_entry)
                         if matched:
                             stream_result = b"*2\r\n"
@@ -215,20 +234,9 @@ def read(conn):
         xread_split = data.split(b"\r\n")
         
         if b"BLOCK" in xread_split:
-            # Check for expired blocking clients first
-            current_time = time.time()
-            for client_conn, block_info in list(blocking_clients.items()):
-                expire_time, _, _ = block_info
-                if current_time >= expire_time:
-                    del blocking_clients[client_conn]
-                    try:
-                        client_conn.sendall(b"$-1\r\n")
-                    except:
-                        pass
-            
             # Find timeout value after BLOCK
             block_idx = xread_split.index(b"BLOCK")
-            timeout_ms = int(xread_split[block_idx + 1])
+            timeout_ms = int(xread_split[block_idx + 2])
             
             # Find streams section
             stream_start = xread_split.index(b"streams") + 1
@@ -244,8 +252,19 @@ def read(conn):
                 matched = []
                 if k in streams:
                     for enter in streams[k]:
-                        if enter["id"] > i:
+                        entry_id = enter["id"]
+                        if b"-" not in entry_id:
+                            entry_id += b"-0"
+                        
+                        # Compare entry ID with waiting ID
+                        entry_parts = entry_id.split(b"-")
+                        i_parts = i.split(b"-")
+                        entry_timestamp, entry_seq = int(entry_parts[0]), int(entry_parts[1])
+                        i_timestamp, i_seq = int(i_parts[0]), int(i_parts[1])
+                        
+                        if (entry_timestamp > i_timestamp) or (entry_timestamp == i_timestamp and entry_seq > i_seq):
                             matched.append(enter)
+                
                 if matched:
                     stream_result = b"*2\r\n"
                     stream_result += string(k)
@@ -268,11 +287,27 @@ def read(conn):
                 # Block the client
                 expire_time = time.time() + (timeout_ms / 1000.0) if timeout_ms > 0 else time.time() + 86400
                 blocking_clients[conn] = (expire_time, stream_keys, stream_ids)
-                # Debug: print that we're blocking this client
-                print(f"DEBUG: Blocking client for streams {stream_keys} with IDs {stream_ids}")
-                print(f"DEBUG: Current blocking_clients count: {len(blocking_clients)}")
+                
+                # Handle timeout in this block - check periodically for expired clients
+                start_time = time.time()
+                while conn in blocking_clients and (time.time() - start_time) < (timeout_ms / 1000.0):
+                    # Process other events while waiting
+                    events = sel.select(timeout=0.1)
+                    for key, _ in events:
+                        if key.fileobj != conn:  # Don't process the blocking client itself
+                            callback = key.data
+                            callback(key.fileobj)
+                    
+                    # Check if this client was unblocked by XADD
+                    if conn not in blocking_clients:
+                        break
+                
+                # If still blocking after timeout, send timeout response
+                if conn in blocking_clients:
+                    del blocking_clients[conn]
+                    conn.sendall(b"$-1\r\n")
         else:
-            # Non-blocking XREAD - original logic
+            # Non-blocking XREAD
             stream_start = xread_split.index(b"streams") + 1
             total = (len(xread_split) - stream_start) // 2
             stream_keys = xread_split[stream_start : stream_start + total]
@@ -282,11 +317,20 @@ def read(conn):
             for k, i in zip(stream_keys, stream_ids):
                 if b"-" not in i:
                     i += b"-0"
-
                 matched = []
                 if k in streams:
                     for enter in streams[k]:
-                        if enter["id"] > i:
+                        entry_id = enter["id"]
+                        if b"-" not in entry_id:
+                            entry_id += b"-0"
+                        
+                        # Compare entry ID with waiting ID
+                        entry_parts = entry_id.split(b"-")
+                        i_parts = i.split(b"-")
+                        entry_timestamp, entry_seq = int(entry_parts[0]), int(entry_parts[1])
+                        i_timestamp, i_seq = int(i_parts[0]), int(i_parts[1])
+                        
+                        if (entry_timestamp > i_timestamp) or (entry_timestamp == i_timestamp and entry_seq > i_seq):
                             matched.append(enter)
 
                 if matched:
