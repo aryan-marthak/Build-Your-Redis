@@ -111,14 +111,11 @@ def read(conn):
         streams[key].append(entry)
         conn.sendall(string(value))
 
-        # This unblocking logic is now much simpler and it works.
         clients_to_remove = []
         for client_conn, block_info in list(blocking_clients.items()):
             expire_time, stream_keys, stream_ids = block_info
             if key in stream_keys:
-                # A key this client was waiting for has new data.
-                # Re-run the non-blocking XREAD logic for that client and send the result.
-                send_non_blocking_xread(client_conn, stream_keys, stream_ids)
+                send_xread_response(client_conn, stream_keys, stream_ids)
                 clients_to_remove.append(client_conn)
         
         for client_conn in clients_to_remove:
@@ -162,7 +159,6 @@ def read(conn):
         
         is_blocking = b"BLOCK" in upper_parts
         
-        # This parsing logic is the main fix. It correctly finds the keys and IDs.
         try:
             streams_idx = upper_parts.index(b"STREAMS")
             num_streams = (len(xread_split) - streams_idx - 2) // 4
@@ -175,15 +171,22 @@ def read(conn):
             conn.sendall(b"-ERR syntax error\r\n")
             return
         
-        # Try to send data immediately. If data is found, this function returns True.
-        data_was_sent = send_non_blocking_xread(conn, stream_keys, stream_ids)
+        # This function now only sends data if it finds something.
+        data_was_sent = send_xread_response(conn, stream_keys, stream_ids)
         
-        # If no data was sent and the command is blocking, store the client.
-        if not data_was_sent and is_blocking:
-            block_idx = upper_parts.index(b"BLOCK")
-            timeout_ms = int(xread_split[block_idx + 2])
-            expire_time = float('inf') if timeout_ms == 0 else time.time() + (timeout_ms / 1000.0)
-            blocking_clients[conn] = (expire_time, stream_keys, stream_ids)
+        # This block now correctly handles the logic after the check.
+        if not data_was_sent:
+            if is_blocking:
+                # If it's a blocking call and no data was sent, we just wait.
+                # The client is registered to be unblocked later.
+                block_idx = upper_parts.index(b"BLOCK")
+                timeout_ms = int(xread_split[block_idx + 2])
+                expire_time = float('inf') if timeout_ms == 0 else time.time() + (timeout_ms / 1000.0)
+                blocking_clients[conn] = (expire_time, stream_keys, stream_ids)
+            else:
+                # If it's NOT a blocking call, we send an empty array now.
+                conn.sendall(b"*0\r\n")
+
 
     elif b"TYPE" in data.upper():
         split = data.split(b"\r\n")
@@ -208,8 +211,8 @@ def read(conn):
     else:
         conn.sendall(b"-ERR unknown command\r\n")
 
-# A helper function to avoid repeating code. It runs the non-blocking XREAD logic.
-def send_non_blocking_xread(conn, stream_keys, stream_ids):
+# This helper function is modified to only send a response if data is found.
+def send_xread_response(conn, stream_keys, stream_ids):
     matches = []
     for k, i in zip(stream_keys, stream_ids):
         start_ts, start_seq = map(int, i.split(b'-'))
@@ -231,16 +234,12 @@ def send_non_blocking_xread(conn, stream_keys, stream_ids):
                     stream_result += string(fk) + string(fv)
             matches.append(stream_result)
 
-    # If there are any matches, send the response.
     if matches:
         result = b"*" + str(len(matches)).encode() + b"\r\n" + b"".join(matches)
         if conn: conn.sendall(result)
-        return True # Indicate that data was sent
+        return True # Data was found and sent
     
-    # If there are no matches, send an empty array for a non-blocking call.
-    else:
-        if conn: conn.sendall(b"*0\r\n")
-        return False # Indicate no data was sent
+    return False # No data was found
 
 
 def main():
@@ -248,20 +247,17 @@ def main():
     server_socket.setblocking(False)
     sel.register(server_socket, selectors.EVENT_READ, accept)
     while True:
-        # This timeout is necessary to check for expired clients.
         events = sel.select(timeout=0.1)
         
         for key, _ in events:
             callback = key.data
             callback(key.fileobj)
 
-        # This new block handles clients whose block time has expired.
         now = time.time()
         clients_to_remove = []
         for client_conn, (expire_time, _, _) in list(blocking_clients.items()):
             if now >= expire_time:
                 try:
-                    # Send null on timeout, as required by the test.
                     client_conn.sendall(b"$-1\r\n")
                 except:
                     pass
