@@ -21,6 +21,15 @@ def accept(sock):
     conn.setblocking(False)
     sel.register(conn, selectors.EVENT_READ, read)
 
+def get_max_id_in_stream(stream_key):
+    """Get the maximum ID currently in the stream, or '0-0' if stream is empty or doesn't exist"""
+    if stream_key not in streams or not streams[stream_key]:
+        return b"0-0"
+    
+    # Find the entry with the maximum ID
+    max_entry = max(streams[stream_key], key=lambda entry: tuple(map(int, entry['id'].split(b'-'))))
+    return max_entry['id']
+
 def read(conn):
     global dictionary, temp3, temp1, temp2, streams
     data = conn.recv(1024)
@@ -167,6 +176,19 @@ def read(conn):
             stream_keys = [xread_split[keys_start + i * 2] for i in range(num_streams)]
             ids_start = keys_start + num_streams * 2
             stream_ids = [xread_split[ids_start + i * 2] for i in range(num_streams)]
+            
+            # Handle $ replacement - replace $ with max ID in each stream
+            processed_stream_ids = []
+            for i, (stream_key, stream_id) in enumerate(zip(stream_keys, stream_ids)):
+                if stream_id == b"$":
+                    # Replace $ with the maximum ID currently in the stream
+                    max_id = get_max_id_in_stream(stream_key)
+                    processed_stream_ids.append(max_id)
+                else:
+                    processed_stream_ids.append(stream_id)
+            
+            stream_ids = processed_stream_ids
+            
         except (ValueError, IndexError):
             conn.sendall(b"-ERR syntax error\r\n")
             return
