@@ -232,8 +232,10 @@ def read(conn):
 
     elif b"GET" in data.upper():
         split = data.split(b"\r\n")
-        if temp1 == split[4] and (temp3 is None or time.time() < temp3):
-            res = string(temp2)
+        key = split[4]
+        if key in dictionary:
+            value = dictionary[key]
+            res = b"$" + str(len(value)).encode() + b"\r\n" + value + b"\r\n"
             conn.sendall(res)
         else:
             conn.sendall(b"$-1\r\n")
