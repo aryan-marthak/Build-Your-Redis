@@ -235,7 +235,10 @@ def read(conn):
     elif b"GET" in data.upper():
         split = data.split(b"\r\n")
         key = split[4]
-        if temp1 == key and (temp3 is None or time.time() < temp3):
+        if temp1 == key and temp3 is not None and time.time() >= temp3:
+            # Key has expired
+            conn.sendall(b"$-1\r\n")
+        elif temp1 == key and (temp3 is None or time.time() < temp3):
             res = string(temp2)
             conn.sendall(res)
         elif key in dictionary:
