@@ -218,8 +218,8 @@ def read(conn):
             ret = b":" + dictionary[temp] + b"\r\n"
             conn.sendall(ret)
         else:
+            dictionary[temp] = b"1"
             conn.sendall(b":1\r\n")
-            dictionary[temp] = 1
 
     elif b"TYPE" in data.upper():
         split = data.split(b"\r\n")
