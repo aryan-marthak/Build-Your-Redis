@@ -47,9 +47,11 @@ def read(conn):
         conn.sendall(b"+OK\r\n")
         split = data.split(b"\r\n")
 
+        key = split[4]
+        value = split[6]
         temp1 = split[4]
         temp2 = split[6]
-        dictionary[temp1] = temp2
+        dictionary[key] = value
 
         if len(split) > 10 and split[10].isdigit():
             temp3 = time.time() + int(split[10])/1000
@@ -232,8 +234,13 @@ def read(conn):
 
     elif b"GET" in data.upper():
         split = data.split(b"\r\n")
-        if temp1 == split[4] and (temp3 is None or time.time() < temp3):
+        key = split[4]
+        if temp1 == key and (temp3 is None or time.time() < temp3):
             res = string(temp2)
+            conn.sendall(res)
+        elif key in dictionary:
+            value = dictionary[key]
+            res = string(value)
             conn.sendall(res)
         else:
             conn.sendall(b"$-1\r\n")
