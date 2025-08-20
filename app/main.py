@@ -219,6 +219,7 @@ def read(conn):
             conn.sendall(ret)
         else:
             conn.sendall(b":1\r\n")
+            dictionary[temp] = 1
 
     elif b"TYPE" in data.upper():
         split = data.split(b"\r\n")
