@@ -216,7 +216,7 @@ def read(conn):
             res = int(dictionary[temp])
             dictionary[temp] = str(res + 1).encode()
             ret = b":" + dictionary[temp] + b"\r\n"
-            conn.sendall(res)
+            conn.sendall(ret)
 
     elif b"TYPE" in data.upper():
         split = data.split(b"\r\n")
