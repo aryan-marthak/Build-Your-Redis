@@ -209,6 +209,13 @@ def read(conn):
                 # If it's NOT a blocking call, we send an empty array now.
                 conn.sendall(b"*0\r\n")
 
+    elif b"INCR" in data.upper():
+        split = data.split(b"\r\n")
+        temp = split[4]
+        if temp in dictionary:
+            dictionary[temp] += 1
+            res = dictionary[temp] + b"\r\n"
+            conn.sendall(res)
 
     elif b"TYPE" in data.upper():
         split = data.split(b"\r\n")
