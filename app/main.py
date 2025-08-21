@@ -244,6 +244,7 @@ def read(conn):
     elif b"EXEC" in data.upper():
         if in_multi:
             conn.sendall(b"*0\r\n")
+            in_multi = False
         else:
             conn.sendall(b"-ERR EXEC without MULTI\r\n")
             
