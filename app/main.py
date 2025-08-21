@@ -235,6 +235,9 @@ def read(conn):
             conn.sendall(b'+string\r\n')
         else:
             conn.sendall(b"+none\r\n")
+    
+    elif b"MULTI" in data.upper():
+        conn.sendall(b"+OK\r\n")
 
     elif b"GET" in data.upper():
         split = data.split(b"\r\n")
