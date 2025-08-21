@@ -238,6 +238,9 @@ def read(conn):
     
     elif b"MULTI" in data.upper():
         conn.sendall(b"+OK\r\n")
+    
+    elif b"EXEC" in data.upper():
+        conn.sendall(b"-ERR EXEC without MULTI\r\n")
 
     elif b"GET" in data.upper():
         split = data.split(b"\r\n")
