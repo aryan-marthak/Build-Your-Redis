@@ -215,7 +215,7 @@ def read(conn):
         split = data.split(b"\r\n")
         temp = split[4]
         if temp in dictionary:
-            if temp.isdigit():
+            if dictionary[temp].isdigit():
                 res = int(dictionary[temp])
                 dictionary[temp] = str(res + 1).encode()
                 ret = b":" + dictionary[temp] + b"\r\n"
