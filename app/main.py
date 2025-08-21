@@ -6,6 +6,7 @@ sel = selectors.DefaultSelector()
 dictionary, temp1, temp2, temp3 = {}, b"", b"", None
 streams = {}
 blocking_clients = {}  # Store blocking XREAD clients
+in_multi = False
 
 def parsing(data):
     split = data.split(b"\r\n")
@@ -237,10 +238,15 @@ def read(conn):
             conn.sendall(b"+none\r\n")
     
     elif b"MULTI" in data.upper():
+        in_multi = True
         conn.sendall(b"+OK\r\n")
     
     elif b"EXEC" in data.upper():
-        conn.sendall(b"-ERR EXEC without MULTI\r\n")
+        if in_multi:
+            conn.sendall(b"*0\r\n")
+        else:
+            conn.sendall(b"-ERR EXEC without MULTI\r\n")
+            
 
     elif b"GET" in data.upper():
         split = data.split(b"\r\n")
