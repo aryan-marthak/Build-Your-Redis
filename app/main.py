@@ -32,7 +32,7 @@ def get_max_id_in_stream(stream_key):
     return max_entry['id']
 
 def read(conn):
-    global dictionary, temp3, temp1, temp2, streams
+    global dictionary, temp3, temp1, temp2, streams, in_multi
     data = conn.recv(1024)
     if not data:
         sel.unregister(conn)
