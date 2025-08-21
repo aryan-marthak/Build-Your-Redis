@@ -215,10 +215,14 @@ def read(conn):
         split = data.split(b"\r\n")
         temp = split[4]
         if temp in dictionary:
-            res = int(dictionary[temp])
-            dictionary[temp] = str(res + 1).encode()
-            ret = b":" + dictionary[temp] + b"\r\n"
-            conn.sendall(ret)
+            if temp.isdigit():
+                res = int(dictionary[temp])
+                dictionary[temp] = str(res + 1).encode()
+                ret = b":" + dictionary[temp] + b"\r\n"
+                conn.sendall(ret)
+            else:
+                error_response = b"-ERR value is not an integer or out of range\r\n"
+                conn.sendall(error_response)
         else:
             dictionary[temp] = b"1"
             conn.sendall(b":1\r\n")
