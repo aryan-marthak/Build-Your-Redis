@@ -326,8 +326,8 @@ def read(conn):
     elif b"EXEC" in data.upper():
         if in_multi:
             responses = []
-            in_multi = False  # Disable transaction mode
             
+            # Execute all queued commands
             for command_type, command_data in command_queue:
                 if command_type == 'SET':
                     responses.append(execute_set_command(command_data))
@@ -352,6 +352,9 @@ def read(conn):
                 result += response
             
             conn.sendall(result)
+            
+            # Reset transaction state AFTER execution
+            in_multi = False
             command_queue.clear()
         else:
             conn.sendall(b"-ERR EXEC without MULTI\r\n")
