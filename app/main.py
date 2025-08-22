@@ -32,6 +32,222 @@ def get_max_id_in_stream(stream_key):
     max_entry = max(streams[stream_key], key=lambda entry: tuple(map(int, entry['id'].split(b'-'))))
     return max_entry['id']
 
+# Command execution functions
+def execute_set_command(data):
+    global dictionary, temp1, temp2, temp3
+    split = data.split(b"\r\n")
+    key = split[4]
+    value = split[6]
+    temp1 = split[4]
+    temp2 = split[6]
+    dictionary[key] = value
+
+    if len(split) > 10 and split[10].isdigit():
+        temp3 = time.time() + int(split[10])/1000
+    else:
+        temp3 = None
+    
+    return b"+OK\r\n"
+
+def execute_get_command(data):
+    global dictionary, temp1, temp2, temp3
+    split = data.split(b"\r\n")
+    key = split[4]
+    if temp1 == key and temp3 is not None and time.time() >= temp3:
+        # Key has expired
+        return b"$-1\r\n"
+    elif temp1 == key and (temp3 is None or time.time() < temp3):
+        return string(temp2)
+    elif key in dictionary:
+        value = dictionary[key]
+        return string(value)
+    else:
+        return b"$-1\r\n"
+
+def execute_incr_command(data):
+    global dictionary
+    split = data.split(b"\r\n")
+    temp = split[4]
+    if temp in dictionary:
+        if dictionary[temp].isdigit():
+            res = int(dictionary[temp])
+            dictionary[temp] = str(res + 1).encode()
+            return b":" + dictionary[temp] + b"\r\n"
+        else:
+            return b"-ERR value is not an integer or out of range\r\n"
+    else:
+        dictionary[temp] = b"1"
+        return b":1\r\n"
+
+def execute_type_command(data):
+    global streams, dictionary
+    split = data.split(b"\r\n")
+    if split[4] in streams:
+        return b'+stream\r\n'
+    elif split[4] in dictionary:
+        return b'+string\r\n'
+    else:
+        return b"+none\r\n"
+
+def execute_xadd_command(data):
+    global streams, blocking_clients
+    split = data.split(b"\r\n")
+    key = split[4]
+    value = split[6]
+
+    if value == b"*":
+        curr_timestamps = int(time.time() * 1000)
+        carry = 0
+
+        if key in streams and streams[key]:
+            final_entry = streams[key][-1]
+            parts = final_entry['id'].split(b"-")
+            timestamp = int(parts[0])
+
+            if curr_timestamps == timestamp:
+                carry = int(parts[1]) + 1
+            elif curr_timestamps < timestamp:
+                curr_timestamps = timestamp
+                carry = int(parts[1]) + 1
+
+        value = str(curr_timestamps).encode() + b"-" + str(carry).encode()
+
+    if b"*" in value:
+        divide = value.split(b"-")
+        if divide[1] == b"*":
+            last = -1
+            if key in streams and streams[key]:
+                for enter in streams[key]:
+                    a, b = enter['id'].split(b"-")
+                    if a == divide[0]:
+                        last = max(last, int(b))
+
+            if divide[0] == b"0" and last == -1:
+                New = 1
+            else:
+                New = last + 1
+            value = divide[0] + b"-" + str(New).encode()
+
+    comp_ts, comp_seq = map(int, value.split(b"-"))
+    if comp_ts == 0 and comp_seq == 0:
+        return b"-ERR The ID specified in XADD must be greater than 0-0\r\n"
+
+    if key in streams and streams[key]:
+        last = streams[key][-1]
+        temp_ts, temp_seq = map(int, last['id'].split(b"-"))
+        if comp_ts < temp_ts or (comp_ts == temp_ts and comp_seq <= temp_seq):
+            return b"-ERR The ID specified in XADD is equal or smaller than the target stream top item\r\n"
+
+    fields = {}
+    for i in range(8, len(split), 4):
+        if i + 2 < len(split) and split[i]:
+            fname = split[i]
+            fval = split[i + 2]
+            fields[fname] = fval
+
+    if key not in streams:
+        streams[key] = []
+
+    entry = {'id': value, 'fields': fields}
+    streams[key].append(entry)
+
+    # Handle blocking clients
+    clients_to_remove = []
+    for client_conn, block_info in list(blocking_clients.items()):
+        expire_time, stream_keys, stream_ids = block_info
+        if key in stream_keys:
+            send_xread_response(client_conn, stream_keys, stream_ids)
+            clients_to_remove.append(client_conn)
+
+    for client_conn in clients_to_remove:
+        if client_conn in blocking_clients:
+            del blocking_clients[client_conn]
+
+    return string(value)
+
+def execute_xrange_command(data):
+    global streams
+    xrange_split = data.split(b"\r\n")
+    xrange_var = xrange_split[4]
+    xrange_start = xrange_split[6]
+    xrange_end = xrange_split[8]
+
+    if b"-" not in xrange_start:
+        xrange_start = xrange_start + b"-0"
+    if xrange_end == b"+":
+        xrange_end = b"9999999999999-9999999999999"
+    elif b"-" not in xrange_end:
+        xrange_end = xrange_end + b"-9999999999999"
+
+    entries = []
+    if xrange_var in streams and streams[xrange_var]:
+        for p in streams[xrange_var]:
+            id = p['id']
+            if id >= xrange_start and id <= xrange_end:
+                entries.append(p)
+
+    result = b"*" + str(len(entries)).encode() + b"\r\n"
+    for p in entries:
+        result += b"*2\r\n"
+        result += string(p['id'])
+        fields_count = len(p['fields']) * 2
+        result += b"*" + str(fields_count).encode() + b"\r\n"
+        for fkey, fval in p['fields'].items():
+            result += string(fkey)
+            result += string(fval)
+    return result
+
+def execute_xread_command(data, conn):
+    """Special case for XREAD since it needs the connection object"""
+    global streams, blocking_clients
+    xread_split = data.split(b"\r\n")
+    upper_parts = [p.upper() for p in xread_split]
+
+    is_blocking = b"BLOCK" in upper_parts
+
+    try:
+        streams_idx = upper_parts.index(b"STREAMS")
+        num_streams = (len(xread_split) - streams_idx - 2) // 4
+        keys_start = streams_idx + 2
+
+        stream_keys = [xread_split[keys_start + i * 2] for i in range(num_streams)]
+        ids_start = keys_start + num_streams * 2
+        stream_ids = [xread_split[ids_start + i * 2] for i in range(num_streams)]
+
+        # Handle $ replacement - replace $ with max ID in each stream
+        processed_stream_ids = []
+        for i, (stream_key, stream_id) in enumerate(zip(stream_keys, stream_ids)):
+            if stream_id == b"$":
+                # Replace $ with the maximum ID currently in the stream
+                max_id = get_max_id_in_stream(stream_key)
+                processed_stream_ids.append(max_id)
+            else:
+                processed_stream_ids.append(stream_id)
+
+        stream_ids = processed_stream_ids
+
+    except (ValueError, IndexError):
+        return b"-ERR syntax error\r\n"
+
+    # This function now only sends data if it finds something.
+    data_was_sent = send_xread_response(conn, stream_keys, stream_ids)
+
+    # This block now correctly handles the logic after the check.
+    if not data_was_sent:
+        if is_blocking:
+            # If it's a blocking call and no data was sent, we just wait.
+            # The client is registered to be unblocked later.
+            block_idx = upper_parts.index(b"BLOCK")
+            timeout_ms = int(xread_split[block_idx + 2])
+            expire_time = float('inf') if timeout_ms == 0 else time.time() + (timeout_ms / 1000.0)
+            blocking_clients[conn] = (expire_time, stream_keys, stream_ids)
+            return None  # Don't send response, client is blocking
+        else:
+            # If it's NOT a blocking call, we send an empty array now.
+            return b"*0\r\n"
+    
+    return None  # Response already sent by send_xread_response
+
 def read(conn):
     global dictionary, command_queue, temp3, temp1, temp2, streams, in_multi
     data = conn.recv(1024)
@@ -50,218 +266,58 @@ def read(conn):
             command_queue.append(('SET', data))
             conn.sendall(b"+QUEUED\r\n")
         else:
-            conn.sendall(b"+OK\r\n")
-            split = data.split(b"\r\n")
+            response = execute_set_command(data)
+            conn.sendall(response)
 
-            key = split[4]
-            value = split[6]
-            temp1 = split[4]
-            temp2 = split[6]
-            dictionary[key] = value
-
-            if len(split) > 10 and split[10].isdigit():
-                temp3 = time.time() + int(split[10])/1000
-            else:
-                temp3 = None
+    elif b"GET" in data.upper():
+        if in_multi:
+            command_queue.append(('GET', data))
+            conn.sendall(b"+QUEUED\r\n")
+        else:
+            response = execute_get_command(data)
+            conn.sendall(response)
 
     elif b"XADD" in data.upper():
         if in_multi:
             command_queue.append(('XADD', data))
             conn.sendall(b"+QUEUED\r\n")
         else:
-            split = data.split(b"\r\n")
-            key = split[4]
-            value = split[6]
-
-            if value == b"*":
-                curr_timestamps = int(time.time() * 1000)
-                carry = 0
-
-                if key in streams and streams[key]:
-                    final_entry = streams[key][-1]
-                    parts = final_entry['id'].split(b"-")
-                    timestamp = int(parts[0])
-
-                    if curr_timestamps == timestamp:
-                        carry = int(parts[1]) + 1
-                    elif curr_timestamps < timestamp:
-                        curr_timestamps = timestamp
-                        carry = int(parts[1]) + 1
-
-                value = str(curr_timestamps).encode() + b"-" + str(carry).encode()
-
-            if b"*" in value:
-                divide = value.split(b"-")
-                if divide[1] == b"*":
-                    last = -1
-                    if key in streams and streams[key]:
-                        for enter in streams[key]:
-                            a, b = enter['id'].split(b"-")
-                            if a == divide[0]:
-                                last = max(last, int(b))
-
-                    if divide[0] == b"0" and last == -1:
-                        New = 1
-                    else:
-                        New = last + 1
-                    value = divide[0] + b"-" + str(New).encode()
-
-            comp_ts, comp_seq = map(int, value.split(b"-"))
-            if comp_ts == 0 and comp_seq == 0:
-                conn.sendall(b"-ERR The ID specified in XADD must be greater than 0-0\r\n")
-                return
-
-            if key in streams and streams[key]:
-                last = streams[key][-1]
-                temp_ts, temp_seq = map(int, last['id'].split(b"-"))
-                if comp_ts < temp_ts or (comp_ts == temp_ts and comp_seq <= temp_seq):
-                    conn.sendall(b"-ERR The ID specified in XADD is equal or smaller than the target stream top item\r\n")
-                    return
-
-            fields = {}
-            for i in range(8, len(split), 4):
-                if i + 2 < len(split) and split[i]:
-                    fname = split[i]
-                    fval = split[i + 2]
-                    fields[fname] = fval
-
-            if key not in streams:
-                streams[key] = []
-
-            entry = {'id': value, 'fields': fields}
-            streams[key].append(entry)
-            conn.sendall(string(value))
-
-            clients_to_remove = []
-            for client_conn, block_info in list(blocking_clients.items()):
-                expire_time, stream_keys, stream_ids = block_info
-                if key in stream_keys:
-                    send_xread_response(client_conn, stream_keys, stream_ids)
-                    clients_to_remove.append(client_conn)
-
-            for client_conn in clients_to_remove:
-                if client_conn in blocking_clients:
-                    del blocking_clients[client_conn]
+            response = execute_xadd_command(data)
+            if response:  # Check if there's an error response
+                conn.sendall(response)
 
     elif b"XRANGE" in data.upper():
         if in_multi:
             command_queue.append(('XRANGE', data))
             conn.sendall(b"+QUEUED\r\n")
         else:
-            xrange_split = data.split(b"\r\n")
-            xrange_var = xrange_split[4]
-            xrange_start = xrange_split[6]
-            xrange_end = xrange_split[8]
-
-            if b"-" not in xrange_start:
-                xrange_start = xrange_start + b"-0"
-            if xrange_end == b"+":
-                xrange_end = b"9999999999999-9999999999999"
-            elif b"-" not in xrange_end:
-                xrange_end = xrange_end + b"-9999999999999"
-
-            entries = []
-            if xrange_var in streams and streams[xrange_var]:
-                for p in streams[xrange_var]:
-                    id = p['id']
-                    if id >= xrange_start and id <= xrange_end:
-                        entries.append(p)
-
-            result = b"*" + str(len(entries)).encode() + b"\r\n"
-            for p in entries:
-                result += b"*2\r\n"
-                result += string(p['id'])
-                fields_count = len(p['fields']) * 2
-                result += b"*" + str(fields_count).encode() + b"\r\n"
-                for fkey, fval in p['fields'].items():
-                    result += string(fkey)
-                    result += string(fval)
-            conn.sendall(result)
-        
+            response = execute_xrange_command(data)
+            conn.sendall(response)
 
     elif b"XREAD" in data.upper():
         if in_multi:
             command_queue.append(('XREAD', data))
             conn.sendall(b"+QUEUED\r\n")
         else:
-            xread_split = data.split(b"\r\n")
-            upper_parts = [p.upper() for p in xread_split]
-
-            is_blocking = b"BLOCK" in upper_parts
-
-            try:
-                streams_idx = upper_parts.index(b"STREAMS")
-                num_streams = (len(xread_split) - streams_idx - 2) // 4
-                keys_start = streams_idx + 2
-
-                stream_keys = [xread_split[keys_start + i * 2] for i in range(num_streams)]
-                ids_start = keys_start + num_streams * 2
-                stream_ids = [xread_split[ids_start + i * 2] for i in range(num_streams)]
-
-                # Handle $ replacement - replace $ with max ID in each stream
-                processed_stream_ids = []
-                for i, (stream_key, stream_id) in enumerate(zip(stream_keys, stream_ids)):
-                    if stream_id == b"$":
-                        # Replace $ with the maximum ID currently in the stream
-                        max_id = get_max_id_in_stream(stream_key)
-                        processed_stream_ids.append(max_id)
-                    else:
-                        processed_stream_ids.append(stream_id)
-
-                stream_ids = processed_stream_ids
-
-            except (ValueError, IndexError):
-                conn.sendall(b"-ERR syntax error\r\n")
-                return
-
-            # This function now only sends data if it finds something.
-            data_was_sent = send_xread_response(conn, stream_keys, stream_ids)
-
-            # This block now correctly handles the logic after the check.
-            if not data_was_sent:
-                if is_blocking:
-                    # If it's a blocking call and no data was sent, we just wait.
-                    # The client is registered to be unblocked later.
-                    block_idx = upper_parts.index(b"BLOCK")
-                    timeout_ms = int(xread_split[block_idx + 2])
-                    expire_time = float('inf') if timeout_ms == 0 else time.time() + (timeout_ms / 1000.0)
-                    blocking_clients[conn] = (expire_time, stream_keys, stream_ids)
-                else:
-                    # If it's NOT a blocking call, we send an empty array now.
-                    conn.sendall(b"*0\r\n")
+            response = execute_xread_command(data, conn)
+            if response:  # Only send if there's a response (not blocking)
+                conn.sendall(response)
 
     elif b"INCR" in data.upper():
         if in_multi:
             command_queue.append(('INCR', data))
             conn.sendall(b"+QUEUED\r\n")
         else:
-            split = data.split(b"\r\n")
-            temp = split[4]
-            if temp in dictionary:
-                if dictionary[temp].isdigit():
-                    res = int(dictionary[temp])
-                    dictionary[temp] = str(res + 1).encode()
-                    ret = b":" + dictionary[temp] + b"\r\n"
-                    conn.sendall(ret)
-                else:
-                    error_response = b"-ERR value is not an integer or out of range\r\n"
-                    conn.sendall(error_response)
-            else:
-                dictionary[temp] = b"1"
-                conn.sendall(b":1\r\n")
+            response = execute_incr_command(data)
+            conn.sendall(response)
 
     elif b"TYPE" in data.upper():
         if in_multi:
             command_queue.append(('TYPE', data))
             conn.sendall(b"+QUEUED\r\n")
         else:
-            split = data.split(b"\r\n")
-            if split[4] in streams:
-                conn.sendall(b'+stream\r\n')
-            elif split[4] in dictionary:
-                conn.sendall(b'+string\r\n')
-            else:
-                conn.sendall(b"+none\r\n")
+            response = execute_type_command(data)
+            conn.sendall(response)
     
     elif b"MULTI" in data.upper():
         in_multi = True
@@ -269,32 +325,44 @@ def read(conn):
     
     elif b"EXEC" in data.upper():
         if in_multi:
-            conn.sendall(b"*0\r\n")
-            in_multi = False
+            responses = []
+            in_multi = False  # Disable transaction mode
+            
+            for command_type, command_data in command_queue:
+                if command_type == 'SET':
+                    responses.append(execute_set_command(command_data))
+                elif command_type == 'GET':
+                    responses.append(execute_get_command(command_data))
+                elif command_type == 'INCR':
+                    responses.append(execute_incr_command(command_data))
+                elif command_type == 'TYPE':
+                    responses.append(execute_type_command(command_data))
+                elif command_type == 'XADD':
+                    responses.append(execute_xadd_command(command_data))
+                elif command_type == 'XRANGE':
+                    responses.append(execute_xrange_command(command_data))
+                elif command_type == 'XREAD':
+                    # For XREAD in transaction, we'll return empty array for simplicity
+                    # since blocking behavior doesn't make sense in transactions
+                    responses.append(b"*0\r\n")
+            
+            # Send array response
+            result = b"*" + str(len(responses)).encode() + b"\r\n"
+            for response in responses:
+                result += response
+            
+            conn.sendall(result)
             command_queue.clear()
         else:
             conn.sendall(b"-ERR EXEC without MULTI\r\n")
-            
 
-    elif b"GET" in data.upper():
-        split = data.split(b"\r\n")
-        key = split[4]
-        if temp1 == key and temp3 is not None and time.time() >= temp3:
-            # Key has expired
-            conn.sendall(b"$-1\r\n")
-        elif temp1 == key and (temp3 is None or time.time() < temp3):
-            res = string(temp2)
-            conn.sendall(res)
-        elif key in dictionary:
-            value = dictionary[key]
-            res = string(value)
-            conn.sendall(res)
-        else:
-            conn.sendall(b"$-1\r\n")
     elif data is not None:
         temp = parsing(data)
-        res = string(temp)
-        conn.sendall(res)
+        if temp:
+            res = string(temp)
+            conn.sendall(res)
+        else:
+            conn.sendall(b"-ERR unknown command\r\n")
     else:
         conn.sendall(b"-ERR unknown command\r\n")
 
