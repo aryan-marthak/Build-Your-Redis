@@ -38,9 +38,13 @@ def execute_set_command(data):
     split = data.split(b"\r\n")
     key = split[4]
     value = split[6]
-    temp1 = split[4]
-    temp2 = split[6]
+    
+    # Update the main dictionary
     dictionary[key] = value
+    
+    # Also update temp variables for expiration logic
+    temp1 = key
+    temp2 = value
 
     if len(split) > 10 and split[10].isdigit():
         temp3 = time.time() + int(split[10])/1000
@@ -68,15 +72,18 @@ def execute_incr_command(data):
     global dictionary
     split = data.split(b"\r\n")
     temp = split[4]
+    print(f"INCR DEBUG: key={temp}, before: dictionary={dictionary}")  # Debug line
     if temp in dictionary:
         if dictionary[temp].isdigit():
             res = int(dictionary[temp])
             dictionary[temp] = str(res + 1).encode()
+            print(f"INCR DEBUG: key={temp}, after: dictionary={dictionary}")  # Debug line
             return b":" + dictionary[temp] + b"\r\n"
         else:
             return b"-ERR value is not an integer or out of range\r\n"
     else:
         dictionary[temp] = b"1"
+        print(f"INCR DEBUG: key={temp}, new key, after: dictionary={dictionary}")  # Debug line
         return b":1\r\n"
 
 def execute_type_command(data):
