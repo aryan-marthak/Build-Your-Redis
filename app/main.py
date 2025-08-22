@@ -3,7 +3,8 @@ import selectors
 import time
 
 sel = selectors.DefaultSelector()
-dictionary, temp1, temp2, temp3 = {}, b"", b"", None
+dictionary = {}
+expiration_times = {}  # New: track expiration times separately
 streams = {}
 blocking_clients = {}  # Store blocking XREAD clients
 in_multi = False
@@ -34,7 +35,7 @@ def get_max_id_in_stream(stream_key):
 
 # Command execution functions
 def execute_set_command(data):
-    global dictionary, temp1, temp2, temp3
+    global dictionary, expiration_times
     split = data.split(b"\r\n")
     key = split[4]
     value = split[6]
@@ -42,56 +43,79 @@ def execute_set_command(data):
     # Update the main dictionary
     dictionary[key] = value
     
-    # Also update temp variables for expiration logic
-    temp1 = key
-    temp2 = value
-
+    # Handle expiration
     if len(split) > 10 and split[10].isdigit():
-        temp3 = time.time() + int(split[10])/1000
+        expiration_times[key] = time.time() + int(split[10])/1000
     else:
-        temp3 = None
+        # Clear any existing expiration
+        if key in expiration_times:
+            del expiration_times[key]
     
     return b"+OK\r\n"
 
 def execute_get_command(data):
-    global dictionary, temp1, temp2, temp3
+    global dictionary, expiration_times
     split = data.split(b"\r\n")
     key = split[4]
-    if temp1 == key and temp3 is not None and time.time() >= temp3:
-        # Key has expired
+    
+    # Check if key exists in dictionary
+    if key not in dictionary:
         return b"$-1\r\n"
-    elif temp1 == key and (temp3 is None or time.time() < temp3):
-        return string(temp2)
-    elif key in dictionary:
-        value = dictionary[key]
-        return string(value)
-    else:
+    
+    # Check expiration
+    if key in expiration_times and time.time() >= expiration_times[key]:
+        # Key has expired, remove it
+        del dictionary[key]
+        del expiration_times[key]
         return b"$-1\r\n"
+    
+    # Return the value
+    value = dictionary[key]
+    return string(value)
 
 def execute_incr_command(data):
-    global dictionary
+    global dictionary, expiration_times
     split = data.split(b"\r\n")
-    temp = split[4]
-    print(f"INCR DEBUG: key={temp}, before: dictionary={dictionary}")  # Debug line
-    if temp in dictionary:
-        if dictionary[temp].isdigit():
-            res = int(dictionary[temp])
-            dictionary[temp] = str(res + 1).encode()
-            print(f"INCR DEBUG: key={temp}, after: dictionary={dictionary}")  # Debug line
-            return b":" + dictionary[temp] + b"\r\n"
-        else:
+    key = split[4]
+    
+    # Check expiration first
+    if key in expiration_times and time.time() >= expiration_times[key]:
+        # Key has expired, remove it
+        del dictionary[key]
+        del expiration_times[key]
+    
+    print(f"INCR DEBUG: key={key}, before: dictionary={dictionary}")  # Debug line
+    
+    if key in dictionary:
+        try:
+            # Try to parse as integer
+            current_value = int(dictionary[key])
+            new_value = current_value + 1
+            dictionary[key] = str(new_value).encode()
+            print(f"INCR DEBUG: key={key}, after: dictionary={dictionary}")  # Debug line
+            return b":" + str(new_value).encode() + b"\r\n"
+        except ValueError:
             return b"-ERR value is not an integer or out of range\r\n"
     else:
-        dictionary[temp] = b"1"
-        print(f"INCR DEBUG: key={temp}, new key, after: dictionary={dictionary}")  # Debug line
+        # Key doesn't exist, create it with value 1
+        dictionary[key] = b"1"
+        print(f"INCR DEBUG: key={key}, new key, after: dictionary={dictionary}")  # Debug line
         return b":1\r\n"
 
 def execute_type_command(data):
-    global streams, dictionary
+    global streams, dictionary, expiration_times
     split = data.split(b"\r\n")
-    if split[4] in streams:
+    key = split[4]
+    
+    # Check expiration first
+    if key in expiration_times and time.time() >= expiration_times[key]:
+        # Key has expired, remove it
+        del dictionary[key]
+        del expiration_times[key]
+    
+    if key in streams:
         return b'+stream\r\n'
-    elif split[4] in dictionary:
+    elif key in dictionary:
         return b'+string\r\n'
     else:
         return b"+none\r\n"
@@ -256,7 +280,7 @@ def execute_xread_command(data, conn):
     return None  # Response already sent by send_xread_response
 
 def read(conn):
-    global dictionary, command_queue, temp3, temp1, temp2, streams, in_multi
+    global dictionary, command_queue, streams, in_multi
     data = conn.recv(1024)
     if not data:
         sel.unregister(conn)
