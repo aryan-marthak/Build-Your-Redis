@@ -7,8 +7,8 @@ dictionary = {}
 expiration_times = {}  # New: track expiration times separately
 streams = {}
 blocking_clients = {}  # Store blocking XREAD clients
-in_multi = False
-command_queue = []
+# --- MINIMAL CHANGE: per-connection transactions instead of global flags ---
+transactions = {}  # conn -> {"in_multi": bool, "queue": [(cmd, data), ...]}
 
 def parsing(data):
     split = data.split(b"\r\n")
@@ -28,10 +28,16 @@ def get_max_id_in_stream(stream_key):
     """Get the maximum ID currently in the stream, or '0-0' if stream is empty or doesn't exist"""
     if stream_key not in streams or not streams[stream_key]:
         return b"0-0"
-    
-    # Find the entry with the maximum ID
     max_entry = max(streams[stream_key], key=lambda entry: tuple(map(int, entry['id'].split(b'-'))))
     return max_entry['id']
+
+# --- MINIMAL ADD: helpers for per-connection transaction state ---
+def is_in_multi(conn):
+    return conn in transactions and transactions[conn]["in_multi"]
+
+def enqueue(conn, cmd, data):
+    transactions.setdefault(conn, {"in_multi": True, "queue": []})
+    transactions[conn]["queue"].append((cmd, data))
 
 # Command execution functions
 def execute_set_command(data):
@@ -39,37 +45,24 @@ def execute_set_command(data):
     split = data.split(b"\r\n")
     key = split[4]
     value = split[6]
-    
-    # Update the main dictionary
     dictionary[key] = value
-    
-    # Handle expiration
     if len(split) > 10 and split[10].isdigit():
         expiration_times[key] = time.time() + int(split[10])/1000
     else:
-        # Clear any existing expiration
         if key in expiration_times:
             del expiration_times[key]
-    
     return b"+OK\r\n"
 
 def execute_get_command(data):
     global dictionary, expiration_times
     split = data.split(b"\r\n")
     key = split[4]
-    
-    # Check if key exists in dictionary
     if key not in dictionary:
         return b"$-1\r\n"
-    
-    # Check expiration
     if key in expiration_times and time.time() >= expiration_times[key]:
-        # Key has expired, remove it
         del dictionary[key]
         del expiration_times[key]
         return b"$-1\r\n"
-    
-    # Return the value
     value = dictionary[key]
     return string(value)
 
@@ -77,18 +70,12 @@ def execute_incr_command(data):
     global dictionary, expiration_times
     split = data.split(b"\r\n")
     key = split[4]
-    
-    # Check expiration first
     if key in expiration_times and time.time() >= expiration_times[key]:
-        # Key has expired, remove it
         del dictionary[key]
         del expiration_times[key]
-    
     print(f"INCR DEBUG: key={key}, before: dictionary={dictionary}")  # Debug line
-    
     if key in dictionary:
         try:
-            # Try to parse as integer
             current_value = int(dictionary[key])
             new_value = current_value + 1
             dictionary[key] = str(new_value).encode()
@@ -97,7 +84,6 @@ def execute_incr_command(data):
         except ValueError:
             return b"-ERR value is not an integer or out of range\r\n"
     else:
-        # Key doesn't exist, create it with value 1
         dictionary[key] = b"1"
         print(f"INCR DEBUG: key={key}, new key, after: dictionary={dictionary}")  # Debug line
         return b":1\r\n"
@@ -106,13 +92,9 @@ def execute_type_command(data):
     global streams, dictionary, expiration_times
     split = data.split(b"\r\n")
     key = split[4]
-    
-    # Check expiration first
     if key in expiration_times and time.time() >= expiration_times[key]:
-        # Key has expired, remove it
         del dictionary[key]
         del expiration_times[key]
-    
     if key in streams:
         return b'+stream\r\n'
     elif key in dictionary:
@@ -129,18 +111,15 @@ def execute_xadd_command(data):
     if value == b"*":
         curr_timestamps = int(time.time() * 1000)
         carry = 0
-
         if key in streams and streams[key]:
             final_entry = streams[key][-1]
             parts = final_entry['id'].split(b"-")
             timestamp = int(parts[0])
-
             if curr_timestamps == timestamp:
                 carry = int(parts[1]) + 1
             elif curr_timestamps < timestamp:
                 curr_timestamps = timestamp
                 carry = int(parts[1]) + 1
-
         value = str(curr_timestamps).encode() + b"-" + str(carry).encode()
 
     if b"*" in value:
@@ -152,7 +131,6 @@ def execute_xadd_command(data):
                     a, b = enter['id'].split(b"-")
                     if a == divide[0]:
                         last = max(last, int(b))
-
             if divide[0] == b"0" and last == -1:
                 New = 1
             else:
@@ -249,7 +227,6 @@ def execute_xread_command(data, conn):
         processed_stream_ids = []
         for i, (stream_key, stream_id) in enumerate(zip(stream_keys, stream_ids)):
             if stream_id == b"$":
-                # Replace $ with the maximum ID currently in the stream
                 max_id = get_max_id_in_stream(stream_key)
                 processed_stream_ids.append(max_id)
             else:
@@ -263,54 +240,52 @@ def execute_xread_command(data, conn):
     # This function now only sends data if it finds something.
     data_was_sent = send_xread_response(conn, stream_keys, stream_ids)
 
-    # This block now correctly handles the logic after the check.
     if not data_was_sent:
         if is_blocking:
-            # If it's a blocking call and no data was sent, we just wait.
-            # The client is registered to be unblocked later.
             block_idx = upper_parts.index(b"BLOCK")
             timeout_ms = int(xread_split[block_idx + 2])
             expire_time = float('inf') if timeout_ms == 0 else time.time() + (timeout_ms / 1000.0)
             blocking_clients[conn] = (expire_time, stream_keys, stream_ids)
             return None  # Don't send response, client is blocking
         else:
-            # If it's NOT a blocking call, we send an empty array now.
             return b"*0\r\n"
     
     return None  # Response already sent by send_xread_response
 
 def read(conn):
-    global dictionary, command_queue, streams, in_multi
+    global dictionary, streams
     data = conn.recv(1024)
     if not data:
         sel.unregister(conn)
         conn.close()
         if conn in blocking_clients:
             del blocking_clients[conn]
+        if conn in transactions:        # MINIMAL ADD: cleanup per-conn txn state
+            del transactions[conn]
         return
 
     if b"PING" in data.upper():
         conn.sendall(b"+PONG\r\n")
 
     elif b"SET" in data.upper():
-        if in_multi:
-            command_queue.append(('SET', data))
+        if is_in_multi(conn):
+            enqueue(conn, 'SET', data)
             conn.sendall(b"+QUEUED\r\n")
         else:
             response = execute_set_command(data)
             conn.sendall(response)
 
     elif b"GET" in data.upper():
-        if in_multi:
-            command_queue.append(('GET', data))
+        if is_in_multi(conn):
+            enqueue(conn, 'GET', data)
             conn.sendall(b"+QUEUED\r\n")
         else:
             response = execute_get_command(data)
             conn.sendall(response)
 
     elif b"XADD" in data.upper():
-        if in_multi:
-            command_queue.append(('XADD', data))
+        if is_in_multi(conn):
+            enqueue(conn, 'XADD', data)
             conn.sendall(b"+QUEUED\r\n")
         else:
             response = execute_xadd_command(data)
@@ -318,16 +293,16 @@ def read(conn):
                 conn.sendall(response)
 
     elif b"XRANGE" in data.upper():
-        if in_multi:
-            command_queue.append(('XRANGE', data))
+        if is_in_multi(conn):
+            enqueue(conn, 'XRANGE', data)
             conn.sendall(b"+QUEUED\r\n")
         else:
             response = execute_xrange_command(data)
             conn.sendall(response)
 
     elif b"XREAD" in data.upper():
-        if in_multi:
-            command_queue.append(('XREAD', data))
+        if is_in_multi(conn):
+            enqueue(conn, 'XREAD', data)
             conn.sendall(b"+QUEUED\r\n")
         else:
             response = execute_xread_command(data, conn)
@@ -335,31 +310,29 @@ def read(conn):
                 conn.sendall(response)
 
     elif b"INCR" in data.upper():
-        if in_multi:
-            command_queue.append(('INCR', data))
+        if is_in_multi(conn):
+            enqueue(conn, 'INCR', data)
             conn.sendall(b"+QUEUED\r\n")
         else:
             response = execute_incr_command(data)
             conn.sendall(response)
 
     elif b"TYPE" in data.upper():
-        if in_multi:
-            command_queue.append(('TYPE', data))
+        if is_in_multi(conn):
+            enqueue(conn, 'TYPE', data)
             conn.sendall(b"+QUEUED\r\n")
         else:
             response = execute_type_command(data)
             conn.sendall(response)
     
     elif b"MULTI" in data.upper():
-        in_multi = True
+        transactions[conn] = {"in_multi": True, "queue": []}  # MINIMAL CHANGE
         conn.sendall(b"+OK\r\n")
     
     elif b"EXEC" in data.upper():
-        if in_multi:
+        if is_in_multi(conn):  # MINIMAL CHANGE: use per-conn state
             responses = []
-            
-            # Execute all queued commands
-            for command_type, command_data in command_queue:
+            for command_type, command_data in transactions[conn]["queue"]:
                 if command_type == 'SET':
                     responses.append(execute_set_command(command_data))
                 elif command_type == 'GET':
@@ -373,20 +346,17 @@ def read(conn):
                 elif command_type == 'XRANGE':
                     responses.append(execute_xrange_command(command_data))
                 elif command_type == 'XREAD':
-                    # For XREAD in transaction, we'll return empty array for simplicity
-                    # since blocking behavior doesn't make sense in transactions
-                    responses.append(b"*0\r\n")
+                    responses.append(b"*0\r\n")  # keep simple, non-blocking in MULTI
             
-            # Send array response
+            # Send array response (keep your original formatting)
             result = b"*" + str(len(responses)).encode() + b"\r\n"
             for response in responses:
                 result += response
             
             conn.sendall(result)
             
-            # Reset transaction state AFTER execution
-            in_multi = False
-            command_queue.clear()
+            # Reset transaction state ONLY for this connection (minimal change)
+            del transactions[conn]
         else:
             conn.sendall(b"-ERR EXEC without MULTI\r\n")
 
@@ -459,6 +429,7 @@ def main():
 
 if __name__ == "__main__":
     main()
+
     
         # xread_var = xread_split[6]
         # xread_time = xread_split[8]
