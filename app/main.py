@@ -308,6 +308,7 @@ def read(conn):
             response = execute_xread_command(data, conn)
             if response:  # Only send if there's a response (not blocking)
                 conn.sendall(response)
+                
 
     elif b"INCR" in data.upper():
         if is_in_multi(conn):
@@ -328,6 +329,14 @@ def read(conn):
     elif b"MULTI" in data.upper():
         transactions[conn] = {"in_multi": True, "queue": []}  # MINIMAL CHANGE
         conn.sendall(b"+OK\r\n")
+    
+    elif b"DISCARD" in data.upper():
+        if is_in_multi(conn):
+            del transactions[conn]
+            conn.sendall(b"+OK\r\n")
+        else:
+            conn.sendall(b"-ERR DISCARD without MULTI\r\n")
+            
     
     elif b"EXEC" in data.upper():
         if is_in_multi(conn):  # MINIMAL CHANGE: use per-conn state
