@@ -10,6 +10,10 @@ streams = {}
 blocking_clients = {}  # Store blocking XREAD clients
 # --- MINIMAL CHANGE: per-connection transactions instead of global flags ---
 transactions = {}  # conn -> {"in_multi": bool, "queue": [(cmd, data), ...]}
+config = {
+    'dir': '/tmp',
+    'dbfilename': 'dump.rdb'
+}
 
 def parsing(data):
     split = data.split(b"\r\n")
@@ -102,6 +106,25 @@ def execute_type_command(data):
         return b'+string\r\n'
     else:
         return b"+none\r\n"
+    
+def execute_config_get_command(data):
+    split = data.split(b"\r\n")
+    param = split[4]
+    
+    if param == b'dir':
+        value = config['dir'].encode()
+        result = b"*2\r\n"
+        result += string(param)
+        result += string(value)
+        return result
+    elif param == b'dbfilename':
+        value = config['dbfilename'].encode()
+        result = b"*2\r\n"
+        result += string(param)
+        result += string(value)
+        return result
+    else:
+        return b"*0\r\n"
 
 def execute_xadd_command(data):
     global streams, blocking_clients
@@ -267,6 +290,10 @@ def read(conn):
 
     if b"PING" in data.upper():
         conn.sendall(b"+PONG\r\n")
+        
+    elif b"CONFIG" in data.upper() and b"GET" in data.upper():
+        response = execute_config_get_command(data)
+        conn.sendall(response)
 
     elif b"SET" in data.upper():
         if is_in_multi(conn):
@@ -410,7 +437,6 @@ def send_xread_response(conn, stream_keys, stream_ids):
     
     return False # No data was found
 
-
 def main(port = 6379):
     server_socket = socket.create_server(("localhost", port ), reuse_port=True)
     server_socket.setblocking(False)
@@ -443,60 +469,13 @@ if __name__ == "__main__":
         idx = sys.argv.index("--port")
         if idx + 1 < len(sys.argv):
             port = int(sys.argv[idx + 1])
+    if "--dir" in sys.argv:
+        idx = sys.argv.index("--dir")
+        if idx + 1 < len(sys.argv):
+            config['dir'] = sys.argv[idx + 1]
+    
+    if "--dbfilename" in sys.argv:
+        idx = sys.argv.index("--dbfilename")
+        if idx + 1 < len(sys.argv):
+            config['dbfilename'] = sys.argv[idx + 1]
     main(port)
-
-    
-        # xread_var = xread_split[6]
-        # xread_time = xread_split[8]
-        
-        # if b"-" not in xread_time:
-        #     xread_time = xread_time + b"-0"
-        
-        # matched = []
-        
-        # if xread_var in streams and streams[xread_var]:
-        #     for p in streams[xread_var]:
-        #         id = p['id']
-        #         if id > xread_time:
-        #             matched.append(p)
-                
-        # if matched:
-        #     result = b"*1\r\n"
-        #     result += b"*2\r\n"
-        #     result += string(xread_var)
-        #     result += b"*" + str(len(matched)).encode() + b"\r\n"
-            
-        #     for q in matched:
-        #         result += b"*2\r\n"
-        #         result += string(q['id'])
-                
-        #         count = len(q['fields']) * 2
-        #         result += b"*" + str(count).encode() + b"\r\n"
-                
-        #         for fkey, fval in q['fields'].items():
-        #             result += string(fkey)
-        #             result += string(fval)
-        # else:
-        #     result = b"*0\r\n"
-        # conn.sendall(result)
-
-# import socket  # noqa: F401
-# import threading
-
-# def handle_client(connection):
-#     while True:
-#         data = connection.recv(1024)
-#         if b"PING" in data.upper():
-#             connection.sendall(b"+PONG\r\n")
-    
-
-# def main():
-#     server_socket = socket.create_server(("localhost", 6379), reuse_port=True)
-#     while True:
-#         connection, _ = server_socket.accept() 
-#         thread = threading.Thread(target=handle_client, args=(connection,))
-#         thread.start()
-
-
-# if __name__ == "__main__":
-#     main()
