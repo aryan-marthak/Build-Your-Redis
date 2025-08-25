@@ -1,6 +1,7 @@
 import socket
 import selectors
 import time
+import sys
 
 sel = selectors.DefaultSelector()
 dictionary = {}
@@ -410,8 +411,8 @@ def send_xread_response(conn, stream_keys, stream_ids):
     return False # No data was found
 
 
-def main():
-    server_socket = socket.create_server(("localhost", 6379), reuse_port=True)
+def main(port = 6379):
+    server_socket = socket.create_server(("localhost", port ), reuse_port=True)
     server_socket.setblocking(False)
     sel.register(server_socket, selectors.EVENT_READ, accept)
     while True:
@@ -437,7 +438,12 @@ def main():
 
 
 if __name__ == "__main__":
-    main()
+    port = 6379
+    if "--port" in sys.argv:
+        idx = sys.argv.index("--port")
+        if idx + 1 < len(sys.argv):
+            port = int(sys.argv[idx + 1])
+    main(port)
 
     
         # xread_var = xread_split[6]
