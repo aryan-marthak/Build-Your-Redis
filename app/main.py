@@ -109,7 +109,7 @@ def execute_type_command(data):
     
 def execute_config_get_command(data):
     split = data.split(b"\r\n")
-    param = split[4]
+    param = split[6]
     
     if param == b'dir':
         value = config['dir'].encode()
