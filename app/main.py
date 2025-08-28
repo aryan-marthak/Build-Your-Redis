@@ -368,8 +368,12 @@ def read(conn):
         transactions[conn] = {"in_multi": True, "queue": []}
         conn.sendall(b"+OK\r\n")
     elif b"DISCARD" in cmd:
-        transactions.pop(conn, None)
-        conn.sendall(b"+OK\r\n")
+        # DISCARD should only work when inside a transaction
+        if is_in_multi(conn):
+            transactions.pop(conn, None)
+            conn.sendall(b"+OK\r\n")
+        else:
+            conn.sendall(b"-ERR DISCARD without MULTI\r\n")
     elif b"EXEC" in cmd:
         if not is_in_multi(conn):
             conn.sendall(b"-ERR EXEC without MULTI\r\n")
