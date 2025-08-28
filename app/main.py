@@ -19,6 +19,7 @@ config = {
 def load_rdb():
     """Super simple RDB loader"""
     global dictionary
+    dictionary.clear()
     
     rdb_path = os.path.join(config['dir'], config['dbfilename'])
     if not os.path.exists(rdb_path):
@@ -30,22 +31,22 @@ def load_rdb():
         
         # Find first key-value pair after skipping headers
         i = 0
-        while i < len(data) - 10:
+        while i < len(data):
             # Look for value type 0x00 (string) followed by reasonable key length
-            if data[i] == 0x00 and 0 < data[i+1] < 50:  
+            if data[i] == 0x00:
                 key_len = data[i+1]
-                i += 2
-                key = data[i:i+key_len]
-                i += key_len
-                if i < len(data) and 0 < data[i] < 50:
-                    val_len = data[i]
-                    i += 1
-                    value = data[i:i+val_len]
-                    dictionary[key] = value
-                    return  # Just load first key for simplicity
+                key = data[i+2:i+2+key_len]
+                val_len_pos = i + 2 + key_len
+                val_len = data[val_len_pos]
+                value = data[val_len_pos+1:val_len_pos+1+val_len]
+                
+                dictionary[key] = value
+
+                i = val_len_pos + 1 + val_len
+                continue
             i += 1
     except:
-        pass  # Ignore errors
+        dictionary.clear()  # Ignore errors
 
 def parsing(data):
     split = data.split(b"\r\n")
