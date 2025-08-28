@@ -280,28 +280,38 @@ def execute_xread_command(data, conn):
     parts = data.split(b"\r\n")
     uparts = [p.upper() if isinstance(p, (bytes, bytearray)) else p for p in parts]
 
-    # parse optional BLOCK
+    # Parse optional BLOCK
     block_ms = None
     if b"BLOCK" in uparts:
         bidx = uparts.index(b"BLOCK")
         if bidx + 2 < len(parts) and parts[bidx + 2].isdigit():
             block_ms = int(parts[bidx + 2])
 
+    # Must have STREAMS
     if b"STREAMS" not in uparts:
         return b"-ERR syntax error\r\n"
     sidx = uparts.index(b"STREAMS")
 
-    # everything after STREAMS is: k1 CRLF id1 CRLF k2 CRLF id2 ...
-    tail = parts[sidx + 2:]
-    # filter out the trailing empty segments
-    tail = [t for t in tail if t != b""]
+    # ✅ FIX: Properly collect tokens after STREAMS, skipping RESP $<len> markers
+    tail = []
+    idx = sidx + 2
+    while idx < len(parts):
+        token = parts[idx]
+        if token == b"":  # end of RESP message
+            break
+        # Skip RESP bulk string length markers like "$5" or "$1"
+        if token.startswith(b"$") and token[1:].isdigit():
+            idx += 1
+            continue
+        tail.append(token)
+        idx += 1
 
-    # split keys and ids (half keys, half ids)
+    # Now split keys and IDs
     half = len(tail) // 2
     stream_keys = tail[:half]
     stream_ids = tail[half:]
 
-    # replace '$' with current max-id for that stream
+    # Resolve '$' to latest IDs in each stream
     resolved_ids = []
     for k, sid in zip(stream_keys, stream_ids):
         if sid == b"$":
@@ -309,15 +319,15 @@ def execute_xread_command(data, conn):
         else:
             resolved_ids.append(sid)
 
-    # try to send data now
+    # Try to send data immediately
     if send_xread_response(conn, stream_keys, resolved_ids):
         return None  # already replied
 
-    # no data
+    # Otherwise, handle blocking clients
     if block_ms is not None:
         expire_time = float('inf') if block_ms == 0 else time.time() + block_ms / 1000.0
         blocking_clients[conn] = (expire_time, stream_keys, resolved_ids)
-        return None  # keep connection pending
+        return None
     else:
         return b"*0\r\n"
 
