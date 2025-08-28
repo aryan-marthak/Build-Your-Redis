@@ -115,7 +115,6 @@ def generate_next_id(stream_key):
     last_id = get_max_id_in_stream(stream_key)
     ms, seq = map(int, last_id.split(b"-"))
     now_ms = int(time.time() * 1000)
-    # If clock moved forward, reset seq to 0
     if now_ms > ms:
         return f"{now_ms}-0".encode()
     else:
@@ -130,33 +129,51 @@ def compare_ids(id1, id2):
     return seq1 - seq2
 
 
+def build_xread_response(stream_keys, last_ids):
+    """
+    Build RESP2 response for XREAD.
+    Returns entries with IDs > last_ids for each stream.
+    """
+    result_streams = []
+
+    for stream_key, last_id in zip(stream_keys, last_ids):
+        entries = []
+        for entry in streams.get(stream_key, []):
+            if compare_ids(entry["id"], last_id) > 0:
+                entry_resp = b"*2\r\n" + string(entry["id"])
+                fields = entry["fields"]
+                entry_resp += b"*" + str(len(fields) * 2).encode() + b"\r\n"
+                for f, v in fields.items():
+                    entry_resp += string(f) + string(v)
+                entries.append(entry_resp)
+        if entries:
+            stream_resp = b"*2\r\n" + string(stream_key)
+            stream_resp += b"*" + str(len(entries)).encode() + b"\r\n" + b"".join(entries)
+            result_streams.append(stream_resp)
+
+    if not result_streams:
+        return b"*0\r\n"
+    return b"*" + str(len(result_streams)).encode() + b"\r\n" + b"".join(result_streams)
+
+
 def execute_xrange_command(data):
-    """Execute XRANGE command to query a range of entries in a stream."""
     parts = data.split(b"\r\n")
-    
-    # Parse: XRANGE stream_key start_id end_id
     stream_key = parts[4]
     start_id = parts[6]
     end_id = parts[8]
-    
+
     if stream_key not in streams:
         return b"*0\r\n"
-    
+
     entries = []
     for entry in streams[stream_key]:
         entry_id = entry["id"]
-        
-        # Check if entry_id is >= start_id
         if start_id != b"-" and compare_ids(entry_id, start_id) < 0:
             continue
-            
-        # Check if entry_id is <= end_id
         if end_id != b"+" and compare_ids(entry_id, end_id) > 0:
             continue
-            
         entries.append(entry)
-    
-    # Build response
+
     result = b"*" + str(len(entries)).encode() + b"\r\n"
     for entry in entries:
         result += b"*2\r\n" + string(entry["id"])
@@ -164,7 +181,7 @@ def execute_xrange_command(data):
         result += b"*" + str(len(fields) * 2).encode() + b"\r\n"
         for field, value in fields.items():
             result += string(field) + string(value)
-    
+
     return result
 
 
@@ -172,7 +189,6 @@ def execute_xread_command(data, conn):
     parts = data.split(b"\r\n")
     uparts = [p.upper() if isinstance(p, (bytes, bytearray)) else p for p in parts]
 
-    # parse optional BLOCK
     block_ms = None
     if b"BLOCK" in uparts:
         bidx = uparts.index(b"BLOCK")
@@ -183,16 +199,11 @@ def execute_xread_command(data, conn):
         return b"-ERR syntax error\r\n"
     sidx = uparts.index(b"STREAMS")
 
-    # Parse stream keys and IDs from RESP protocol
-    # After STREAMS, we have: $len key $len key ... $len id $len id ...
-    tail = parts[sidx + 1:]  # Start from the element after STREAMS
-    
-    # Filter out RESP length indicators (starting with $) and empty strings
+    tail = parts[sidx + 1:]
     actual_values = []
     i = 0
     while i < len(tail):
         if tail[i].startswith(b'$') and i + 1 < len(tail):
-            # This is a length indicator, the next element is the actual value
             actual_values.append(tail[i + 1])
             i += 2
         elif tail[i] != b"":
@@ -200,10 +211,10 @@ def execute_xread_command(data, conn):
             i += 1
         else:
             i += 1
-    
+
     if len(actual_values) % 2 != 0:
         return b"-ERR syntax error\r\n"
-    
+
     half = len(actual_values) // 2
     stream_keys = actual_values[:half]
     stream_ids = actual_values[half:]
@@ -215,7 +226,6 @@ def execute_xread_command(data, conn):
         else:
             resolved_ids.append(sid)
 
-    # Check if any streams have new entries
     has_new_entries = False
     for key, last_id in zip(stream_keys, resolved_ids):
         for entry in streams.get(key, []):
@@ -225,11 +235,9 @@ def execute_xread_command(data, conn):
         if has_new_entries:
             break
 
-    # If we have new entries, return them immediately
     if has_new_entries:
         return build_xread_response(stream_keys, resolved_ids)
 
-    # No data, block if requested
     if block_ms is not None:
         expire_time = float('inf') if block_ms == 0 else time.time() + block_ms / 1000.0
         blocking_clients[conn] = (expire_time, stream_keys, resolved_ids)
@@ -247,7 +255,6 @@ def execute_xadd_command(data):
     field = parts[8]
     value = parts[10]
 
-    # Generate ID if '*'
     if raw_id == b"*":
         entry_id = generate_next_id(stream_key)
     else:
@@ -257,7 +264,6 @@ def execute_xadd_command(data):
     entry = {"id": entry_id, "fields": {field: value}}
     streams[stream_key].append(entry)
 
-    # Unblock clients waiting for this stream
     to_unblock = []
     for conn, (expire_time, keys, ids) in blocking_clients.items():
         if stream_key in keys:
@@ -363,17 +369,12 @@ def execute_config_get_command(data):
 
 
 def check_blocked_timeouts():
-    """Check and handle timeouts for blocked clients."""
     current_time = time.time()
     expired_clients = []
-    
     for conn, (expire_time, stream_keys, resolved_ids) in blocking_clients.items():
         if current_time >= expire_time:
-            # Send null response for timeout
             conn.sendall(b"$-1\r\n")
             expired_clients.append(conn)
-    
-    # Remove expired clients
     for conn in expired_clients:
         blocking_clients.pop(conn, None)
 
@@ -432,7 +433,6 @@ def read(conn):
         transactions[conn] = {"in_multi": True, "queue": []}
         conn.sendall(b"+OK\r\n")
     elif b"DISCARD" in cmd:
-        # DISCARD should only work when inside a transaction
         if is_in_multi(conn):
             transactions.pop(conn, None)
             conn.sendall(b"+OK\r\n")
@@ -473,8 +473,6 @@ def main(port=6379):
         for key, _ in events:
             callback = key.data
             callback(key.fileobj)
-        
-        # Check for blocked client timeouts
         check_blocked_timeouts()
 
 
