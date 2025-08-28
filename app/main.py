@@ -17,7 +17,7 @@ config = {
 }
 
 def load_rdb():
-    """Minimal RDB loader: handles multiple keys correctly, supports plain and 0x00-prefixed keys."""
+    """Minimal RDB loader: handles multiple keys, both with and without 0x00 type markers."""
     global dictionary
     dictionary.clear()
 
@@ -30,7 +30,7 @@ def load_rdb():
             data = f.read()
 
         i = 0
-        # Skip header "REDIS0011"
+        # Skip header
         if data[:5] == b"REDIS":
             i = 9
 
@@ -41,7 +41,7 @@ def load_rdb():
             if b == 0xFF:
                 break
 
-            # Skip metadata (FA)
+            # Skip metadata
             if b == 0xFA:
                 name_len = data[i + 1]
                 i += 2 + name_len
@@ -49,17 +49,17 @@ def load_rdb():
                 i += 1 + val_len
                 continue
 
-            # Skip DB selector (FE)
+            # Skip database selector
             if b == 0xFE:
                 i += 2
                 continue
 
-            # Skip hash table sizes (FB)
+            # Skip hash table size info
             if b == 0xFB:
                 i += 3
                 continue
 
-            # Case 1: explicit string type marker
+            # Case 1: 0x00 marker before key
             if b == 0x00:
                 key_len = data[i + 1]
                 key = data[i + 2:i + 2 + key_len]
@@ -72,7 +72,7 @@ def load_rdb():
                 dictionary[key] = value
                 continue
 
-            # Case 2: length-prefixed key (no 0x00 marker)
+            # Case 2: No 0x00 marker → length-prefixed key
             if 1 <= b <= 0x40:  # plausible key length
                 key_len = b
                 key = data[i + 1:i + 1 + key_len]
@@ -85,11 +85,12 @@ def load_rdb():
                 dictionary[key] = value
                 continue
 
-            # Otherwise skip unknown byte
+            # Unknown byte → skip it
             i += 1
 
     except Exception:
         dictionary.clear()
+
 
 def parsing(data):
     split = data.split(b"\r\n")
