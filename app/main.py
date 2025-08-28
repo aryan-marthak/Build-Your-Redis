@@ -17,69 +17,68 @@ config = {
 }
 
 def load_rdb():
-    """Improved RDB loader: supports multiple keys and skips metadata."""
+    """Minimal RDB loader: supports multiple keys and length-prefixed strings."""
     global dictionary
     dictionary.clear()
 
     rdb_path = os.path.join(config['dir'], config['dbfilename'])
     if not os.path.exists(rdb_path):
-        return  # No RDB file → empty DB
+        return
 
     try:
         with open(rdb_path, 'rb') as f:
             data = f.read()
 
         i = 0
-        # Skip the "REDIS" header (9 bytes: REDIS0011)
+        # Skip "REDIS" header
         if data[:5] == b"REDIS":
             i = 9
 
         while i < len(data):
             b = data[i]
 
-            # EOF marker — stop parsing
+            # EOF marker → stop
             if b == 0xFF:
                 break
 
             # Skip metadata section (FA)
             if b == 0xFA:
-                # Metadata name length (string encoded)
                 name_len = data[i + 1]
-                name = data[i + 2:i + 2 + name_len]
                 i += 2 + name_len
-                # Metadata value length (string encoded)
                 val_len = data[i]
                 i += 1 + val_len
                 continue
 
             # Skip database selector (FE)
             if b == 0xFE:
-                i += 2  # FE + 1 byte DB index
+                i += 2
                 continue
 
             # Skip hash table size info (FB)
             if b == 0xFB:
-                # Two size-encoded integers follow
-                size1 = data[i + 1]
-                size2 = data[i + 2]
                 i += 3
                 continue
 
-            # String value type (0x00)
+            # Type 0x00 → string key-value pair
             if b == 0x00:
+                # Key
                 key_len = data[i + 1]
                 key = data[i + 2:i + 2 + key_len]
-                val_len_pos = i + 2 + key_len
-                val_len = data[val_len_pos]
-                value = data[val_len_pos + 1:val_len_pos + 1 + val_len]
+                i = i + 2 + key_len
+
+                # Value
+                val_len = data[i]
+                value = data[i + 1:i + 1 + val_len]
+                i = i + 1 + val_len
+
+                # Save to dictionary
                 dictionary[key] = value
-                i = val_len_pos + 1 + val_len
                 continue
 
-            # Skip unknown opcodes safely
+            # Unknown byte → skip 1
             i += 1
 
-    except Exception:
+    except:
         dictionary.clear()
 
 
