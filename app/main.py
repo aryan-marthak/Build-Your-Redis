@@ -17,9 +17,10 @@ config = {
 }
 
 def load_rdb():
-    """RDB loader: correctly parses multiple keys and string values."""
-    global dictionary
+    """RDB loader: supports multiple keys, string values, and expirations."""
+    global dictionary, expiration_times
     dictionary.clear()
+    expiration_times.clear()
 
     rdb_path = os.path.join(config['dir'], config['dbfilename'])
     if not os.path.exists(rdb_path):
@@ -29,10 +30,11 @@ def load_rdb():
         data = f.read()
 
     i = 0
+    # Skip REDIS header
     if data[:5] == b"REDIS":
-        i = 9  # skip header
+        i = 9
 
-    # Skip metadata + selectors until FB marker
+    # Skip metadata until FB marker
     while i < len(data) and data[i] != 0xFB:
         # metadata section
         if data[i] == 0xFA:
@@ -47,18 +49,26 @@ def load_rdb():
             continue
         i += 1
 
-    if i >= len(data):
-        return
-
     # Skip FB marker + 2 size bytes
     i += 3
 
-    # Parse keys until EOF (0xFF)
+    # Parse key-value pairs until EOF (0xFF)
     while i < len(data):
         if data[i] == 0xFF:
             break
 
-        # Optional 0x00 type marker
+        expire_ts = None
+
+        # Check for expiration opcodes
+        if data[i] == 0xFD:  # expire in seconds
+            expire_ts = int.from_bytes(data[i + 1:i + 5], "little")
+            expire_ts *= 1000  # convert to ms
+            i += 5
+        elif data[i] == 0xFC:  # expire in milliseconds
+            expire_ts = int.from_bytes(data[i + 1:i + 9], "little")
+            i += 9
+
+        # Skip optional type byte 0x00
         if data[i] == 0x00:
             i += 1
 
@@ -74,12 +84,15 @@ def load_rdb():
         value = data[i:i + val_len]
         i += val_len
 
+        # Store key-value
         dictionary[key] = value
 
-    print("DEBUG: Loaded keys:", [k.decode() for k in dictionary])
+        # If expiry exists, store it in seconds
+        if expire_ts is not None:
+            expiration_times[key] = expire_ts / 1000.0
 
-
-
+    print("DEBUG: Loaded keys =", [k.decode() for k in dictionary])
+    print("DEBUG: Expirations =", {k.decode(): expiration_times[k] for k in expiration_times})
 
 def parsing(data):
     split = data.split(b"\r\n")
