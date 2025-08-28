@@ -108,23 +108,15 @@ def get_max_id_in_stream(stream_key):
 
 
 def generate_next_id(stream_key, raw_id=None):
-    """Generate next stream ID correctly, including 1-* case."""
     if raw_id and raw_id.endswith(b"-*"):
         ms = int(raw_id.split(b"-")[0])
-        seq = 0
-        # If the same ms exists, choose max seq + 1
         existing = [e for e in streams.get(stream_key, []) if int(e["id"].split(b"-")[0]) == ms]
         if existing:
             seq = max(int(e["id"].split(b"-")[1]) for e in existing) + 1
+        else:
+            seq = 1  # <-- FIX: Start from 1 when no existing entry
         return f"{ms}-{seq}".encode()
 
-    last_id = get_max_id_in_stream(stream_key)
-    ms, seq = map(int, last_id.split(b"-"))
-    now_ms = int(time.time() * 1000)
-    if now_ms > ms:
-        return f"{now_ms}-0".encode()
-    else:
-        return f"{ms}-{seq + 1}".encode()
 
 
 def compare_ids(id1, id2):
