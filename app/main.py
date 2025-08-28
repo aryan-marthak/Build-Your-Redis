@@ -17,7 +17,7 @@ config = {
 }
 
 def load_rdb():
-    """Minimal RDB loader: sequentially read keys/values after FB marker."""
+    """RDB loader: handles optional 0x00 type markers before keys."""
     global dictionary
     dictionary.clear()
 
@@ -28,25 +28,29 @@ def load_rdb():
     with open(rdb_path, "rb") as f:
         data = f.read()
 
-    # 1. Skip "REDIS" header (9 bytes)
+    # 1. Skip header
     i = 0
     if data[:5] == b"REDIS":
         i = 9
 
-    # 2. Skip everything until FB marker
+    # 2. Skip until FB marker
     while i < len(data) and data[i] != 0xFB:
         i += 1
 
     if i >= len(data):
-        return  # No keys in RDB
+        return
 
-    # 3. Skip FB and its 2 size bytes
+    # 3. Skip FB marker + 2 size bytes
     i += 3
 
-    # 4. Now read sequential [key][value] pairs until FF
+    # 4. Parse key-value pairs until FF
     while i < len(data):
         if data[i] == 0xFF:  # EOF marker
             break
+
+        # Skip optional 0x00 type marker
+        if data[i] == 0x00:
+            i += 1
 
         # Read key
         key_len = data[i]
@@ -62,8 +66,8 @@ def load_rdb():
 
         dictionary[key] = value
 
-    # Debugging
     print("DEBUG: Loaded keys =", [k.decode() for k in dictionary])
+
 
 
 
