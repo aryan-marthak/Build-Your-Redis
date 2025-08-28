@@ -130,22 +130,42 @@ def compare_ids(id1, id2):
     return seq1 - seq2
 
 
-def build_xread_response(stream_keys, last_ids):
-    resp = b"*" + str(len(stream_keys)).encode() + b"\r\n"
-    for key, last_id in zip(stream_keys, last_ids):
-        entries = []
-        for entry in streams.get(key, []):
-            if compare_ids(entry["id"], last_id) > 0:
-                entries.append(entry)
-        resp += b"*2\r\n" + string(key)
-        resp += b"*" + str(len(entries)).encode() + b"\r\n"
-        for entry in entries:
-            resp += b"*2\r\n" + string(entry["id"])
-            fields = entry["fields"]
-            resp += b"*" + str(len(fields) * 2).encode() + b"\r\n"
-            for f, v in fields.items():
-                resp += string(f) + string(v)
-    return resp
+def execute_xrange_command(data):
+    """Execute XRANGE command to query a range of entries in a stream."""
+    parts = data.split(b"\r\n")
+    
+    # Parse: XRANGE stream_key start_id end_id
+    stream_key = parts[4]
+    start_id = parts[6]
+    end_id = parts[8]
+    
+    if stream_key not in streams:
+        return b"*0\r\n"
+    
+    entries = []
+    for entry in streams[stream_key]:
+        entry_id = entry["id"]
+        
+        # Check if entry_id is >= start_id
+        if start_id != b"-" and compare_ids(entry_id, start_id) < 0:
+            continue
+            
+        # Check if entry_id is <= end_id
+        if end_id != b"+" and compare_ids(entry_id, end_id) > 0:
+            continue
+            
+        entries.append(entry)
+    
+    # Build response
+    result = b"*" + str(len(entries)).encode() + b"\r\n"
+    for entry in entries:
+        result += b"*2\r\n" + string(entry["id"])
+        fields = entry["fields"]
+        result += b"*" + str(len(fields) * 2).encode() + b"\r\n"
+        for field, value in fields.items():
+            result += string(field) + string(value)
+    
+    return result
 
 
 def execute_xread_command(data, conn):
@@ -406,6 +426,8 @@ def read(conn):
             conn.sendall(resp)
     elif b"XADD" in cmd:
         conn.sendall(execute_xadd_command(data))
+    elif b"XRANGE" in cmd:
+        conn.sendall(execute_xrange_command(data))
     elif b"MULTI" in cmd:
         transactions[conn] = {"in_multi": True, "queue": []}
         conn.sendall(b"+OK\r\n")
