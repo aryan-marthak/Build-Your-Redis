@@ -16,7 +16,6 @@ config = {
     'dbfilename': 'dump.rdb'
 }
 
-
 def load_rdb():
     """Load RDB keys, values, and expirations (simplified parser for tests)."""
     global dictionary, expiration_times
