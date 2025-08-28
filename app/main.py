@@ -17,36 +17,71 @@ config = {
 }
 
 def load_rdb():
-    """Super simple RDB loader"""
+    """Improved RDB loader: supports multiple keys and skips metadata."""
     global dictionary
     dictionary.clear()
-    
+
     rdb_path = os.path.join(config['dir'], config['dbfilename'])
     if not os.path.exists(rdb_path):
-        return
-    
+        return  # No RDB file → empty DB
+
     try:
         with open(rdb_path, 'rb') as f:
             data = f.read()
-        
-        # Find first key-value pair after skipping headers
+
         i = 0
+        # Skip the "REDIS" header (9 bytes: REDIS0011)
+        if data[:5] == b"REDIS":
+            i = 9
+
         while i < len(data):
-            # Look for value type 0x00 (string) followed by reasonable key length
-            if data[i] == 0x00:
-                key_len = data[i+1]
-                key = data[i+2:i+2+key_len]
+            b = data[i]
+
+            # EOF marker — stop parsing
+            if b == 0xFF:
+                break
+
+            # Skip metadata section (FA)
+            if b == 0xFA:
+                # Metadata name length (string encoded)
+                name_len = data[i + 1]
+                name = data[i + 2:i + 2 + name_len]
+                i += 2 + name_len
+                # Metadata value length (string encoded)
+                val_len = data[i]
+                i += 1 + val_len
+                continue
+
+            # Skip database selector (FE)
+            if b == 0xFE:
+                i += 2  # FE + 1 byte DB index
+                continue
+
+            # Skip hash table size info (FB)
+            if b == 0xFB:
+                # Two size-encoded integers follow
+                size1 = data[i + 1]
+                size2 = data[i + 2]
+                i += 3
+                continue
+
+            # String value type (0x00)
+            if b == 0x00:
+                key_len = data[i + 1]
+                key = data[i + 2:i + 2 + key_len]
                 val_len_pos = i + 2 + key_len
                 val_len = data[val_len_pos]
-                value = data[val_len_pos+1:val_len_pos+1+val_len]
-                
+                value = data[val_len_pos + 1:val_len_pos + 1 + val_len]
                 dictionary[key] = value
-
                 i = val_len_pos + 1 + val_len
                 continue
+
+            # Skip unknown opcodes safely
             i += 1
-    except:
-        dictionary.clear()  # Ignore errors
+
+    except Exception:
+        dictionary.clear()
+
 
 def parsing(data):
     split = data.split(b"\r\n")
