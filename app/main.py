@@ -17,66 +17,57 @@ config = {
 }
 
 def load_rdb():
-    """Parse RDB files with multiple keys (length-prefixed strings only)."""
+    """Super-minimal RDB loader for stage JW4: only supports length-prefixed strings."""
     global dictionary
     dictionary.clear()
 
-    path = os.path.join(config['dir'], config['dbfilename'])
-    if not os.path.exists(path):
+    rdb_path = os.path.join(config['dir'], config['dbfilename'])
+    if not os.path.exists(rdb_path):
         return
 
-    with open(path, "rb") as f:
+    with open(rdb_path, "rb") as f:
         data = f.read()
 
     i = 0
+    # Skip "REDIS" header
     if data[:5] == b"REDIS":
-        i = 9  # skip header
+        i = 9
 
+    # Skip until after hash table size info (FB marker)
     while i < len(data):
-        b = data[i]
-
-        # EOF marker
-        if b == 0xFF:
+        if data[i] == 0xFB:
+            i += 3  # FB + two size bytes
             break
-
-        # Metadata block(s)
-        if b == 0xFA:
+        elif data[i] in (0xFA, 0xFE):  # skip metadata or DB selector
             name_len = data[i + 1]
             i += 2 + name_len
             val_len = data[i]
             i += 1 + val_len
-            continue
-
-        # DB selector
-        if b == 0xFE:
-            i += 2
-            continue
-
-        # Hash table sizes
-        if b == 0xFB:
-            i += 3
-            continue
-
-        # Value type marker (0x00 = string)
-        if b == 0x00:
+        else:
             i += 1
 
-        # --- Key ---
+    # Now we're at the first key/value pair
+    while i < len(data):
+        # Stop if we reach EOF marker
+        if data[i] == 0xFF:
+            break
+
+        # Read key
         key_len = data[i]
         key = data[i + 1:i + 1 + key_len]
         i = i + 1 + key_len
 
-        # --- Value ---
-        if data[i] == 0x00:
-            i += 1  # skip value type marker if present
+        # Read value
         val_len = data[i]
         value = data[i + 1:i + 1 + val_len]
         i = i + 1 + val_len
 
+        # Store in memory
         dictionary[key] = value
 
-    # Debugging: show loaded keys
+    # Debugging
     print("DEBUG: Loaded keys =", [k.decode() for k in dictionary])
+
 
 def parsing(data):
     split = data.split(b"\r\n")
