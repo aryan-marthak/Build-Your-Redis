@@ -9,81 +9,62 @@ dictionary = {}
 expiration_times = {}
 streams = {}
 blocking_clients = {}
-transactions = {}  # per-connection MULTI state
+transactions = {}
 
 config = {
     'dir': '/tmp',
     'dbfilename': 'dump.rdb'
 }
 
-
 def load_rdb():
-    """Very simple RDB loader: finds keys, values, and expirations."""
     global dictionary, expiration_times
     dictionary.clear()
     expiration_times.clear()
-
     path = os.path.join(config['dir'], config['dbfilename'])
     if not os.path.exists(path):
         return
 
     data = open(path, "rb").read()
     i = 0
-
-    # 1. Skip header "REDISxxxx"
     if data.startswith(b"REDIS"):
         i = 9
 
-    # 2. Walk until we find the main table marker (0xFB)
     while i < len(data) and data[i] != 0xFB:
         i += 1
-    i += 3   # skip 0xFB + 2 size bytes
+    i += 3
 
-    # 3. Now loop over entries
     while i < len(data):
-        if data[i] == 0xFF:   # end of file
+        if data[i] == 0xFF:
             break
 
         expire_ts = None
-
-        # Expiry in seconds (0xFD)
         if data[i] == 0xFD:
             expire_ts = int.from_bytes(data[i+1:i+5], "little") * 1000
             i += 5
-        # Expiry in ms (0xFC)
         elif data[i] == 0xFC:
             expire_ts = int.from_bytes(data[i+1:i+9], "little")
             i += 9
 
-        # Type byte (only handle strings = 0x00)
         type_byte = data[i]
         i += 1
         if type_byte != 0x00:
             break
 
-        # Key
-        key_len = data[i]
-        i += 1
-        key = data[i:i+key_len]
-        i += key_len
+        key_len = data[i]; i += 1
+        key = data[i:i+key_len]; i += key_len
 
-        # Value
-        val_len = data[i]
-        i += 1
-        val = data[i:i+val_len]
-        i += val_len
+        val_len = data[i]; i += 1
+        val = data[i:i+val_len]; i += val_len
 
-        # If expired, skip it
         if expire_ts and expire_ts/1000.0 <= time.time():
             continue
 
-        # Store
         dictionary[key] = val
         if expire_ts:
             expiration_times[key] = expire_ts/1000.0
 
     print("DEBUG: Loaded keys:", [k.decode() for k in dictionary])
-    print("DEBUG: Expirations:", {k.decode(): v for k, v in expiration_times.items()})
+    print("DEBUG: Expirations:", {k.decode(): v for k,v in expiration_times.items()})
 
 
 def parsing(data):
@@ -92,32 +73,20 @@ def parsing(data):
         return split[4]
     return None
 
-
 def string(words):
     return b"$" + str(len(words)).encode() + b"\r\n" + words + b"\r\n"
-
 
 def accept(sock):
     conn, _ = sock.accept()
     conn.setblocking(False)
     sel.register(conn, selectors.EVENT_READ, read)
 
-
-def get_max_id_in_stream(stream_key):
-    if stream_key not in streams or not streams[stream_key]:
-        return b"0-0"
-    max_entry = max(streams[stream_key], key=lambda entry: tuple(map(int, entry['id'].split(b'-'))))
-    return max_entry['id']
-
-
 def is_in_multi(conn):
     return conn in transactions and transactions[conn]["in_multi"]
-
 
 def enqueue(conn, cmd, data):
     transactions.setdefault(conn, {"in_multi": True, "queue": []})
     transactions[conn]["queue"].append((cmd, data))
-
 
 def execute_keys_command(_):
     keys = list(dictionary.keys())
@@ -125,7 +94,6 @@ def execute_keys_command(_):
     for key in keys:
         result += string(key)
     return result
-
 
 def execute_set_command(data):
     global dictionary, expiration_times
@@ -139,7 +107,6 @@ def execute_set_command(data):
         del expiration_times[key]
     return b"+OK\r\n"
 
-
 def execute_get_command(data):
     global dictionary, expiration_times
     split = data.split(b"\r\n")
@@ -151,7 +118,6 @@ def execute_get_command(data):
         del expiration_times[key]
         return b"$-1\r\n"
     return string(dictionary[key])
-
 
 def execute_incr_command(data):
     global dictionary, expiration_times
@@ -171,7 +137,6 @@ def execute_incr_command(data):
     dictionary[key] = b"1"
     return b":1\r\n"
 
-
 def execute_type_command(data):
     split = data.split(b"\r\n")
     key = split[4]
@@ -183,7 +148,6 @@ def execute_type_command(data):
     elif key in dictionary:
         return b'+string\r\n'
     return b"+none\r\n"
-
 
 def execute_config_get_command(data):
     split = data.split(b"\r\n")
@@ -197,6 +161,102 @@ def execute_config_get_command(data):
     result = b"*2\r\n" + string(param) + string(value)
     return result
 
+# ------------------ STREAMS ------------------
+
+def execute_xadd_command(data):
+    global streams
+    parts = data.split(b"\r\n")
+    stream = parts[4]
+    entry_id = parts[6]
+    fields = {}
+    i = 8
+    while i < len(parts) and parts[i]:
+        field = parts[i]
+        value = parts[i+2]
+        fields[field] = value
+        i += 4
+
+    if entry_id == b"*":
+        ms = int(time.time() * 1000)
+        seq = len(streams.get(stream, []))
+        entry_id = f"{ms}-{seq}".encode()
+
+    streams.setdefault(stream, [])
+    streams[stream].append({"id": entry_id, "fields": fields})
+
+    wake_blocked_clients(stream)
+
+    return string(entry_id)
+
+def execute_xread_command(data, conn):
+    parts = data.split(b"\r\n")
+    uparts = [p.upper() if isinstance(p, (bytes, bytearray)) else p for p in parts]
+    block_ms = None
+    if b"BLOCK" in uparts:
+        bidx = uparts.index(b"BLOCK")
+        if bidx + 2 < len(parts) and parts[bidx + 2].isdigit():
+            block_ms = int(parts[bidx + 2])
+    if b"STREAMS" not in uparts:
+        return b"-ERR syntax error\r\n"
+    sidx = uparts.index(b"STREAMS")
+    tail = parts[sidx + 2:]
+    tail = [t for t in tail if t != b""]
+    half = len(tail) // 2
+    stream_keys = tail[:half]
+    stream_ids = tail[half:]
+
+    resolved_ids = []
+    for k, sid in zip(stream_keys, stream_ids):
+        resolved_ids.append(sid if sid != b"$" else b"0-0")
+
+    resp = build_xread_response(stream_keys, resolved_ids)
+    if resp:
+        return resp
+
+    if block_ms is not None:
+        expire_time = float('inf') if block_ms == 0 else time.time() + block_ms / 1000.0
+        blocking_clients[conn] = (expire_time, stream_keys, resolved_ids)
+        return None
+    else:
+        return b"*0\r\n"
+
+def build_xread_response(stream_keys, resolved_ids):
+    outer = []
+    for stream, since_id in zip(stream_keys, resolved_ids):
+        entries = []
+        for e in streams.get(stream, []):
+            if compare_ids(e['id'], since_id) > 0:
+                fields = e['fields']
+                fv = []
+                for k,v in fields.items():
+                    fv.append(string(k))
+                    fv.append(string(v))
+                entry = b"*" + b"2\r\n" + string(e['id']) + b"*" + str(len(fv)).encode() + b"\r\n" + b"".join(fv)
+                entries.append(entry)
+        if entries:
+            arr = b"*" + str(len(entries)+1).encode() + b"\r\n" + string(stream) + b"".join(entries)
+            outer.append(arr)
+    if not outer:
+        return None
+    return b"*" + str(len(outer)).encode() + b"\r\n" + b"".join(outer)
+
+def compare_ids(a, b):
+    ats, asq = map(int, a.split(b"-"))
+    bts, bsq = map(int, b.split(b"-"))
+    return (ats > bts) - (ats < bts) or (asq > bsq) - (asq < bsq)
+
+def wake_blocked_clients(stream):
+    to_wake = []
+    for conn, (exp, keys, ids) in list(blocking_clients.items()):
+        if stream in keys:
+            resp = build_xread_response(keys, ids)
+            if resp:
+                conn.sendall(resp)
+                to_wake.append(conn)
+    for c in to_wake:
+        blocking_clients.pop(c, None)
+
+# ------------------ SERVER LOOP ------------------
 
 def read(conn):
     global dictionary, streams
@@ -209,20 +269,6 @@ def read(conn):
         return
 
     cmd = data.upper()
-
-    # handle timeouts for blocking XREAD
-    now = time.time()
-    expired = []
-    for c, (exp, _, _) in list(blocking_clients.items()):
-        if exp != float('inf') and now >= exp:
-            try:
-                # For XREAD timeout, send empty array
-                c.sendall(b"*0\r\n")
-            except Exception:
-                pass
-            expired.append(c)
-    for c in expired:
-        blocking_clients.pop(c, None)
 
     if b"PING" in cmd:
         conn.sendall(b"+PONG\r\n")
@@ -254,15 +300,21 @@ def read(conn):
             conn.sendall(b"+QUEUED\r\n")
         else:
             conn.sendall(execute_type_command(data))
+    elif b"XADD" in cmd:
+        conn.sendall(execute_xadd_command(data))
+    elif b"XREAD" in cmd:
+        resp = execute_xread_command(data, conn)
+        if resp:
+            conn.sendall(resp)
     elif b"MULTI" in cmd:
         transactions[conn] = {"in_multi": True, "queue": []}
         conn.sendall(b"+OK\r\n")
     elif b"DISCARD" in cmd:
-        if is_in_multi(conn):
+        if not is_in_multi(conn):
+            conn.sendall(b"-ERR DISCARD without MULTI\r\n")
+        else:
             transactions.pop(conn, None)
             conn.sendall(b"+OK\r\n")
-        else:
-            conn.sendall(b"-ERR DISCARD without MULTI\r\n")
     elif b"EXEC" in cmd:
         if not is_in_multi(conn):
             conn.sendall(b"-ERR EXEC without MULTI\r\n")
@@ -287,7 +339,6 @@ def read(conn):
         else:
             conn.sendall(b"-ERR unknown command\r\n")
 
-
 def main(port=6379):
     load_rdb()
     server_socket = socket.create_server(("localhost", port), reuse_port=True)
@@ -295,10 +346,14 @@ def main(port=6379):
     sel.register(server_socket, selectors.EVENT_READ, accept)
     while True:
         events = sel.select(timeout=0.1)
+        now = time.time()
+        for c, (exp, _, _) in list(blocking_clients.items()):
+            if exp != float("inf") and now > exp:
+                c.sendall(b"*0\r\n")
+                blocking_clients.pop(c, None)
         for key, _ in events:
             callback = key.data
             callback(key.fileobj)
-
 
 if __name__ == "__main__":
     port = 6379
