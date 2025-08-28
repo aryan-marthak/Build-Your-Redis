@@ -342,6 +342,22 @@ def execute_config_get_command(data):
     return result
 
 
+def check_blocked_timeouts():
+    """Check and handle timeouts for blocked clients."""
+    current_time = time.time()
+    expired_clients = []
+    
+    for conn, (expire_time, stream_keys, resolved_ids) in blocking_clients.items():
+        if current_time >= expire_time:
+            # Send null response for timeout
+            conn.sendall(b"$-1\r\n")
+            expired_clients.append(conn)
+    
+    # Remove expired clients
+    for conn in expired_clients:
+        blocking_clients.pop(conn, None)
+
+
 def read(conn):
     global dictionary, streams
     data = conn.recv(1024)
@@ -435,6 +451,9 @@ def main(port=6379):
         for key, _ in events:
             callback = key.data
             callback(key.fileobj)
+        
+        # Check for blocked client timeouts
+        check_blocked_timeouts()
 
 
 if __name__ == "__main__":
