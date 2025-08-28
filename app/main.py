@@ -59,23 +59,33 @@ def load_rdb():
                 i += 3
                 continue
 
-            # Type 0x00 → string key-value pair
+            # CASE 1: type 0x00 → string key-value pair
             if b == 0x00:
-                # Key
                 key_len = data[i + 1]
                 key = data[i + 2:i + 2 + key_len]
                 i = i + 2 + key_len
 
-                # Value
                 val_len = data[i]
                 value = data[i + 1:i + 1 + val_len]
                 i = i + 1 + val_len
 
-                # Save to dictionary
                 dictionary[key] = value
                 continue
 
-            # Unknown byte → skip 1
+            # CASE 2: length-prefixed key directly (no 0x00 marker)
+            if b > 0 and b < 50:  # plausible key length
+                key_len = b
+                key = data[i + 1:i + 1 + key_len]
+                i = i + 1 + key_len
+
+                val_len = data[i]
+                value = data[i + 1:i + 1 + val_len]
+                i = i + 1 + val_len
+
+                dictionary[key] = value
+                continue
+
+            # Unknown byte → skip
             i += 1
 
     except:
