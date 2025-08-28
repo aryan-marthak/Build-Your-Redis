@@ -244,13 +244,16 @@ def execute_xadd_command(data):
 
     if raw_id == b"*":
         entry_id = generate_next_id(stream_key)
-    else:
+    elif raw_id.endswith(b"-*"):
         entry_id = generate_next_id(stream_key, raw_id)
+    else:
+        entry_id = raw_id  # use explicit ID as-is
 
     streams.setdefault(stream_key, [])
     entry = {"id": entry_id, "fields": {field: value}}
     streams[stream_key].append(entry)
 
+    # unblock clients waiting on this stream
     to_unblock = []
     for conn, (expire_time, keys, ids) in blocking_clients.items():
         if stream_key in keys:
@@ -265,6 +268,7 @@ def execute_xadd_command(data):
         blocking_clients.pop(conn, None)
 
     return string(entry_id)
+
 
 
 def is_in_multi(conn):
