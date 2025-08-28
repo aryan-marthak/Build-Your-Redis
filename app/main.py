@@ -17,7 +17,7 @@ config = {
 }
 
 def load_rdb():
-    """RDB loader: handles optional 0x00 type markers before keys."""
+    """RDB loader: correctly parses multiple keys and string values."""
     global dictionary
     dictionary.clear()
 
@@ -28,27 +28,37 @@ def load_rdb():
     with open(rdb_path, "rb") as f:
         data = f.read()
 
-    # 1. Skip header
     i = 0
     if data[:5] == b"REDIS":
-        i = 9
+        i = 9  # skip header
 
-    # 2. Skip until FB marker
+    # Skip metadata + selectors until FB marker
     while i < len(data) and data[i] != 0xFB:
+        # metadata section
+        if data[i] == 0xFA:
+            name_len = data[i + 1]
+            i += 2 + name_len
+            val_len = data[i]
+            i += 1 + val_len
+            continue
+        # database selector
+        if data[i] == 0xFE:
+            i += 2
+            continue
         i += 1
 
     if i >= len(data):
         return
 
-    # 3. Skip FB marker + 2 size bytes
+    # Skip FB marker + 2 size bytes
     i += 3
 
-    # 4. Parse key-value pairs until FF
+    # Parse keys until EOF (0xFF)
     while i < len(data):
-        if data[i] == 0xFF:  # EOF marker
+        if data[i] == 0xFF:
             break
 
-        # Skip optional 0x00 type marker
+        # Optional 0x00 type marker
         if data[i] == 0x00:
             i += 1
 
@@ -66,7 +76,7 @@ def load_rdb():
 
         dictionary[key] = value
 
-    print("DEBUG: Loaded keys =", [k.decode() for k in dictionary])
+    print("DEBUG: Loaded keys:", [k.decode() for k in dictionary])
 
 
 
