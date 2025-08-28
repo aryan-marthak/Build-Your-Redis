@@ -17,70 +17,66 @@ config = {
 }
 
 def load_rdb():
-    """Final RDB loader: supports multiple keys and string values with optional type markers."""
+    """Parse RDB files with multiple keys (length-prefixed strings only)."""
     global dictionary
     dictionary.clear()
 
-    rdb_path = os.path.join(config['dir'], config['dbfilename'])
-    if not os.path.exists(rdb_path):
+    path = os.path.join(config['dir'], config['dbfilename'])
+    if not os.path.exists(path):
         return
 
-    try:
-        with open(rdb_path, 'rb') as f:
-            data = f.read()
+    with open(path, "rb") as f:
+        data = f.read()
 
-        i = 0
-        if data[:5] == b"REDIS":
-            i = 9  # Skip "REDIS" header
+    i = 0
+    if data[:5] == b"REDIS":
+        i = 9  # skip header
 
-        while i < len(data):
-            b = data[i]
+    while i < len(data):
+        b = data[i]
 
-            # EOF marker
-            if b == 0xFF:
-                break
+        # EOF marker
+        if b == 0xFF:
+            break
 
-            # Metadata
-            if b == 0xFA:
-                name_len = data[i + 1]
-                i += 2 + name_len
-                val_len = data[i]
-                i += 1 + val_len
-                continue
-
-            # DB selector
-            if b == 0xFE:
-                i += 2
-                continue
-
-            # Hash table size
-            if b == 0xFB:
-                i += 3
-                continue
-
-            # If it's a string type marker, skip it
-            if b == 0x00:
-                i += 1
-
-            # Read key
-            key_len = data[i]
-            key = data[i + 1:i + 1 + key_len]
-            i = i + 1 + key_len
-
-            # Value might also start with a type marker (0x00)
-            if data[i] == 0x00:
-                i += 1  # skip type marker
-
+        # Metadata block(s)
+        if b == 0xFA:
+            name_len = data[i + 1]
+            i += 2 + name_len
             val_len = data[i]
-            value = data[i + 1:i + 1 + val_len]
-            i = i + 1 + val_len
+            i += 1 + val_len
+            continue
 
-            dictionary[key] = value
+        # DB selector
+        if b == 0xFE:
+            i += 2
+            continue
 
-    except Exception:
-        dictionary.clear()
+        # Hash table sizes
+        if b == 0xFB:
+            i += 3
+            continue
 
+        # Value type marker (0x00 = string)
+        if b == 0x00:
+            i += 1
 
+        # --- Key ---
+        key_len = data[i]
+        key = data[i + 1:i + 1 + key_len]
+        i = i + 1 + key_len
+
+        # --- Value ---
+        if data[i] == 0x00:
+            i += 1  # skip value type marker if present
+        val_len = data[i]
+        value = data[i + 1:i + 1 + val_len]
+        i = i + 1 + val_len
+
+        dictionary[key] = value
+
+    # Debugging: show loaded keys
+    print("DEBUG: Loaded keys =", [k.decode() for k in dictionary])
 
 def parsing(data):
     split = data.split(b"\r\n")
