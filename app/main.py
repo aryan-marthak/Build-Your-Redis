@@ -17,7 +17,7 @@ config = {
 }
 
 def load_rdb():
-    """Super-minimal RDB loader for stage JW4: only supports length-prefixed strings."""
+    """Minimal RDB loader: sequentially read keys/values after FB marker."""
     global dictionary
     dictionary.clear()
 
@@ -28,45 +28,43 @@ def load_rdb():
     with open(rdb_path, "rb") as f:
         data = f.read()
 
+    # 1. Skip "REDIS" header (9 bytes)
     i = 0
-    # Skip "REDIS" header
     if data[:5] == b"REDIS":
         i = 9
 
-    # Skip until after hash table size info (FB marker)
-    while i < len(data):
-        if data[i] == 0xFB:
-            i += 3  # FB + two size bytes
-            break
-        elif data[i] in (0xFA, 0xFE):  # skip metadata or DB selector
-            name_len = data[i + 1]
-            i += 2 + name_len
-            val_len = data[i]
-            i += 1 + val_len
-        else:
-            i += 1
+    # 2. Skip everything until FB marker
+    while i < len(data) and data[i] != 0xFB:
+        i += 1
 
-    # Now we're at the first key/value pair
+    if i >= len(data):
+        return  # No keys in RDB
+
+    # 3. Skip FB and its 2 size bytes
+    i += 3
+
+    # 4. Now read sequential [key][value] pairs until FF
     while i < len(data):
-        # Stop if we reach EOF marker
-        if data[i] == 0xFF:
+        if data[i] == 0xFF:  # EOF marker
             break
 
         # Read key
         key_len = data[i]
-        key = data[i + 1:i + 1 + key_len]
-        i = i + 1 + key_len
+        i += 1
+        key = data[i:i + key_len]
+        i += key_len
 
         # Read value
         val_len = data[i]
-        value = data[i + 1:i + 1 + val_len]
-        i = i + 1 + val_len
+        i += 1
+        value = data[i:i + val_len]
+        i += val_len
 
-        # Store in memory
         dictionary[key] = value
 
     # Debugging
     print("DEBUG: Loaded keys =", [k.decode() for k in dictionary])
+
 
 
 def parsing(data):
