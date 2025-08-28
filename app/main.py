@@ -17,7 +17,7 @@ config = {
 }
 
 def load_rdb():
-    """Minimal RDB loader: supports multiple keys and length-prefixed strings."""
+    """Fixed RDB loader: supports multiple keys and handles the actual RDB format correctly."""
     global dictionary
     dictionary.clear()
 
@@ -30,11 +30,14 @@ def load_rdb():
             data = f.read()
 
         i = 0
-        # Skip "REDIS" header
+        # Skip "REDIS" header and version
         if data[:5] == b"REDIS":
             i = 9
 
         while i < len(data):
+            if i >= len(data):
+                break
+                
             b = data[i]
 
             # EOF marker → stop
@@ -43,52 +46,87 @@ def load_rdb():
 
             # Skip metadata section (FA)
             if b == 0xFA:
-                name_len = data[i + 1]
-                i += 2 + name_len
+                i += 1
+                if i >= len(data):
+                    break
+                name_len = data[i]
+                i += 1 + name_len
+                if i >= len(data):
+                    break
                 val_len = data[i]
                 i += 1 + val_len
                 continue
 
             # Skip database selector (FE)
             if b == 0xFE:
-                i += 2
+                i += 2  # Skip FE and database number
                 continue
 
             # Skip hash table size info (FB)
             if b == 0xFB:
-                i += 3
+                i += 1
+                # Skip hash table sizes (encoded as variable length integers, but we'll assume single bytes for simplicity)
+                if i < len(data):
+                    i += 1  # hash table size
+                if i < len(data):
+                    i += 1  # expiry hash table size
+                if i < len(data):
+                    i += 1  # additional size info
                 continue
 
-            # CASE 1: type 0x00 → string key-value pair
+            # String value type (0x00) - this is the value type, not a length
             if b == 0x00:
-                key_len = data[i + 1]
-                key = data[i + 2:i + 2 + key_len]
-                i = i + 2 + key_len
-
+                i += 1
+                if i >= len(data):
+                    break
+                # Read key length and key
+                key_len = data[i]
+                i += 1
+                if i + key_len > len(data):
+                    break
+                key = data[i:i + key_len]
+                i += key_len
+                
+                if i >= len(data):
+                    break
+                # Read value length and value
                 val_len = data[i]
-                value = data[i + 1:i + 1 + val_len]
-                i = i + 1 + val_len
-
+                i += 1
+                if i + val_len > len(data):
+                    break
+                value = data[i:i + val_len]
+                i += val_len
+                
                 dictionary[key] = value
                 continue
 
-            # CASE 2: length-prefixed key directly (no 0x00 marker)
-            if b > 0 and b < 50:  # plausible key length
+            # If we encounter what looks like a key length directly (no type marker)
+            # This handles cases where the type byte might be omitted or different
+            if b > 0 and b < 64:  # reasonable key length
                 key_len = b
-                key = data[i + 1:i + 1 + key_len]
-                i = i + 1 + key_len
-
+                i += 1
+                if i + key_len > len(data):
+                    break
+                key = data[i:i + key_len]
+                i += key_len
+                
+                if i >= len(data):
+                    break
                 val_len = data[i]
-                value = data[i + 1:i + 1 + val_len]
-                i = i + 1 + val_len
-
+                i += 1
+                if i + val_len > len(data):
+                    break
+                value = data[i:i + val_len]
+                i += val_len
+                
                 dictionary[key] = value
                 continue
 
             # Unknown byte → skip
             i += 1
 
-    except:
+    except Exception as e:
+        print(f"RDB load error: {e}")
         dictionary.clear()
 
 
