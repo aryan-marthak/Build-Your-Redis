@@ -16,6 +16,7 @@ config = {
     'dbfilename': 'dump.rdb'
 }
 
+
 def load_rdb():
     """Load RDB keys, values, and expirations."""
     global dictionary, expiration_times
@@ -47,11 +48,11 @@ def load_rdb():
 
         # Expiry in seconds (0xFD)
         if data[i] == 0xFD:
-            expire_ts = int.from_bytes(data[i + 1:i + 5], "little") * 1000
+            expire_ts = int.from_bytes(data[i+1:i+5], "little") * 1000
             i += 5
         # Expiry in ms (0xFC)
         elif data[i] == 0xFC:
-            expire_ts = int.from_bytes(data[i + 1:i + 9], "little")
+            expire_ts = int.from_bytes(data[i+1:i+9], "little")
             i += 9
 
         # Type byte (only handle strings = 0x00)
@@ -63,23 +64,24 @@ def load_rdb():
         # Key
         key_len = data[i]
         i += 1
-        key = data[i:i + key_len]
+        key = data[i:i+key_len]
         i += key_len
 
         # Value
         val_len = data[i]
         i += 1
-        val = data[i:i + val_len]
+        val = data[i:i+val_len]
         i += val_len
 
         # Skip expired keys
-        if expire_ts and expire_ts / 1000.0 <= time.time():
+        if expire_ts and expire_ts/1000.0 <= time.time():
             continue
 
         # Store in memory
         dictionary[key] = val
         if expire_ts:
-            expiration_times[key] = expire_ts / 1000.0
+            expiration_times[key] = expire_ts/1000.0
+
 
 def parsing(data):
     split = data.split(b"\r\n")
@@ -87,13 +89,16 @@ def parsing(data):
         return split[4]
     return None
 
+
 def string(words):
     return b"$" + str(len(words)).encode() + b"\r\n" + words + b"\r\n"
+
 
 def accept(sock):
     conn, _ = sock.accept()
     conn.setblocking(False)
     sel.register(conn, selectors.EVENT_READ, read)
+
 
 def get_max_id_in_stream(stream_key):
     if stream_key not in streams or not streams[stream_key]:
@@ -101,16 +106,26 @@ def get_max_id_in_stream(stream_key):
     max_entry = max(streams[stream_key], key=lambda e: tuple(map(int, e['id'].split(b'-'))))
     return max_entry['id']
 
-def generate_next_id(stream_key):
-    """Generate next stream ID automatically."""
+
+def generate_next_id(stream_key, raw_id=None):
+    """Generate next stream ID correctly, including 1-* case."""
+    if raw_id and raw_id.endswith(b"-*"):
+        ms = int(raw_id.split(b"-")[0])
+        seq = 0
+        # If the same ms exists, choose max seq + 1
+        existing = [e for e in streams.get(stream_key, []) if int(e["id"].split(b"-")[0]) == ms]
+        if existing:
+            seq = max(int(e["id"].split(b"-")[1]) for e in existing) + 1
+        return f"{ms}-{seq}".encode()
+
     last_id = get_max_id_in_stream(stream_key)
     ms, seq = map(int, last_id.split(b"-"))
     now_ms = int(time.time() * 1000)
-    # If clock moved forward, reset seq to 0
     if now_ms > ms:
         return f"{now_ms}-0".encode()
     else:
         return f"{ms}-{seq + 1}".encode()
+
 
 def compare_ids(id1, id2):
     ms1, seq1 = map(int, id1.split(b"-"))
@@ -119,26 +134,27 @@ def compare_ids(id1, id2):
         return ms1 - ms2
     return seq1 - seq2
 
+
 def build_xread_response(stream_keys, resolved_ids):
     result = b"*" + str(len(stream_keys)).encode() + b"\r\n"
-    for key, last_id in zip(stream_keys, resolved_ids):
-        new_entries = [e for e in streams.get(key, []) if compare_ids(e["id"], last_id) > 0]
-        result += b"*2\r\n" + string(key)
+    for stream_key, last_id in zip(stream_keys, resolved_ids):
+        new_entries = [e for e in streams.get(stream_key, []) if compare_ids(e["id"], last_id) > 0]
+        result += b"*2\r\n" + string(stream_key)
         result += b"*" + str(len(new_entries)).encode() + b"\r\n"
         for entry in new_entries:
             result += b"*2\r\n" + string(entry["id"])
             fields = entry["fields"]
             result += b"*" + str(len(fields) * 2).encode() + b"\r\n"
-            for field, value in fields.items():
-                result += string(field) + string(value)
+            for f, v in fields.items():
+                result += string(f) + string(v)
     return result
+
 
 def execute_xrange_command(data):
     parts = data.split(b"\r\n")
     stream_key = parts[4]
     start_id = parts[6]
     end_id = parts[8]
-
     if stream_key not in streams:
         return b"*0\r\n"
 
@@ -156,14 +172,14 @@ def execute_xrange_command(data):
         result += b"*2\r\n" + string(entry["id"])
         fields = entry["fields"]
         result += b"*" + str(len(fields) * 2).encode() + b"\r\n"
-        for field, value in fields.items():
-            result += string(field) + string(value)
+        for f, v in fields.items():
+            result += string(f) + string(v)
     return result
+
 
 def execute_xread_command(data, conn):
     parts = data.split(b"\r\n")
     uparts = [p.upper() if isinstance(p, (bytes, bytearray)) else p for p in parts]
-
     block_ms = None
     if b"BLOCK" in uparts:
         bidx = uparts.index(b"BLOCK")
@@ -173,8 +189,8 @@ def execute_xread_command(data, conn):
     if b"STREAMS" not in uparts:
         return b"-ERR syntax error\r\n"
     sidx = uparts.index(b"STREAMS")
-
     tail = parts[sidx + 1:]
+
     actual_values = []
     i = 0
     while i < len(tail):
@@ -186,9 +202,6 @@ def execute_xread_command(data, conn):
             i += 1
         else:
             i += 1
-
-    if len(actual_values) % 2 != 0:
-        return b"-ERR syntax error\r\n"
 
     half = len(actual_values) // 2
     stream_keys = actual_values[:half]
@@ -220,34 +233,24 @@ def execute_xread_command(data, conn):
     else:
         return b"*0\r\n"
 
+
 def execute_xadd_command(data):
     global streams, blocking_clients
     parts = data.split(b"\r\n")
-
     stream_key = parts[4]
     raw_id = parts[6]
     field = parts[8]
     value = parts[10]
 
-    # Handle partial auto-ID like "1-*"
-    if raw_id.endswith(b"-*"):
-        ms = int(raw_id.split(b"-")[0])
-        # Start seq at 0 for new ms
-        seq = 0
-        existing_ids = [e["id"] for e in streams.get(stream_key, []) if e["id"].startswith(str(ms).encode() + b"-")]
-        if existing_ids:
-            seq = max(int(e.split(b"-")[1]) for e in existing_ids) + 1
-        entry_id = f"{ms}-{seq}".encode()
-    elif raw_id == b"*":
+    if raw_id == b"*":
         entry_id = generate_next_id(stream_key)
     else:
-        entry_id = raw_id
+        entry_id = generate_next_id(stream_key, raw_id)
 
     streams.setdefault(stream_key, [])
     entry = {"id": entry_id, "fields": {field: value}}
     streams[stream_key].append(entry)
 
-    # Unblock clients waiting for this stream
     to_unblock = []
     for conn, (expire_time, keys, ids) in blocking_clients.items():
         if stream_key in keys:
@@ -263,12 +266,15 @@ def execute_xadd_command(data):
 
     return string(entry_id)
 
+
 def is_in_multi(conn):
     return conn in transactions and transactions[conn]["in_multi"]
+
 
 def enqueue(conn, cmd, data):
     transactions.setdefault(conn, {"in_multi": True, "queue": []})
     transactions[conn]["queue"].append((cmd, data))
+
 
 def execute_keys_command(_):
     keys = list(dictionary.keys())
@@ -276,6 +282,7 @@ def execute_keys_command(_):
     for key in keys:
         result += string(key)
     return result
+
 
 def execute_set_command(data):
     global dictionary, expiration_times
@@ -289,6 +296,7 @@ def execute_set_command(data):
         del expiration_times[key]
     return b"+OK\r\n"
 
+
 def execute_get_command(data):
     global dictionary, expiration_times
     split = data.split(b"\r\n")
@@ -300,6 +308,7 @@ def execute_get_command(data):
         del expiration_times[key]
         return b"$-1\r\n"
     return string(dictionary[key])
+
 
 def execute_incr_command(data):
     global dictionary, expiration_times
@@ -319,6 +328,7 @@ def execute_incr_command(data):
     dictionary[key] = b"1"
     return b":1\r\n"
 
+
 def execute_type_command(data):
     split = data.split(b"\r\n")
     key = split[4]
@@ -330,6 +340,7 @@ def execute_type_command(data):
     elif key in dictionary:
         return b'+string\r\n'
     return b"+none\r\n"
+
 
 def execute_config_get_command(data):
     split = data.split(b"\r\n")
@@ -343,6 +354,7 @@ def execute_config_get_command(data):
     result = b"*2\r\n" + string(param) + string(value)
     return result
 
+
 def check_blocked_timeouts():
     current_time = time.time()
     expired_clients = []
@@ -352,6 +364,7 @@ def check_blocked_timeouts():
             expired_clients.append(conn)
     for conn in expired_clients:
         blocking_clients.pop(conn, None)
+
 
 def read(conn):
     global dictionary, streams
@@ -364,6 +377,7 @@ def read(conn):
         return
 
     cmd = data.upper()
+
     if b"PING" in cmd:
         conn.sendall(b"+PONG\r\n")
     elif b"KEYS" in cmd:
@@ -435,6 +449,7 @@ def read(conn):
         else:
             conn.sendall(b"-ERR unknown command\r\n")
 
+
 def main(port=6379):
     load_rdb()
     server_socket = socket.create_server(("localhost", port), reuse_port=True)
@@ -446,6 +461,7 @@ def main(port=6379):
             callback = key.data
             callback(key.fileobj)
         check_blocked_timeouts()
+
 
 if __name__ == "__main__":
     port = 6379
