@@ -15,6 +15,8 @@ config = {
     'dir': '/tmp',
     'dbfilename': 'dump.rdb'
 }
+
+
 def load_rdb():
     """Very simple RDB loader: finds keys, values, and expirations."""
     global dictionary, expiration_times
@@ -46,39 +48,38 @@ def load_rdb():
 
         # Expiry in seconds (0xFD)
         if data[i] == 0xFD:
-            expire_ts = int.from_bytes(data[i+1:i+5], "little") * 1000
+            expire_ts = int.from_bytes(data[i + 1:i + 5], "little") * 1000
             i += 5
         # Expiry in ms (0xFC)
         elif data[i] == 0xFC:
-            expire_ts = int.from_bytes(data[i+1:i+9], "little")
+            expire_ts = int.from_bytes(data[i + 1:i + 9], "little")
             i += 9
 
         # Type byte (only handle strings = 0x00)
         type_byte = data[i]
         i += 1
         if type_byte != 0x00:
-            # unknown type → stop parsing
             break
 
         # Key
         key_len = data[i]; i += 1
-        key = data[i:i+key_len]; i += key_len
+        key = data[i:i + key_len]; i += key_len
 
         # Value
         val_len = data[i]; i += 1
-        val = data[i:i+val_len]; i += val_len
+        val = data[i:i + val_len]; i += val_len
 
         # If expired, skip it
-        if expire_ts and expire_ts/1000.0 <= time.time():
+        if expire_ts and expire_ts / 1000.0 <= time.time():
             continue
 
         # Store
         dictionary[key] = val
         if expire_ts:
-            expiration_times[key] = expire_ts/1000.0
+            expiration_times[key] = expire_ts / 1000.0
 
     print("DEBUG: Loaded keys:", [k.decode() for k in dictionary])
-    print("DEBUG: Expirations:", {k.decode(): v for k,v in expiration_times.items()})
+    print("DEBUG: Expirations:", {k.decode(): v for k, v in expiration_times.items()})
 
 
 def parsing(data):
@@ -139,10 +140,8 @@ def execute_get_command(data):
     global dictionary, expiration_times
     split = data.split(b"\r\n")
     key = split[4]
-    # Key missing
     if key not in dictionary:
         return b"$-1\r\n"
-    # Key expired
     if key in expiration_times and time.time() >= expiration_times[key]:
         del dictionary[key]
         del expiration_times[key]
@@ -195,6 +194,42 @@ def execute_config_get_command(data):
     return result
 
 
+def execute_xadd_command(data):
+    parts = data.split(b"\r\n")
+    key = parts[4]
+    rid = parts[6]  # requested ID
+    fields = {}
+    i = 8
+    while i + 2 <= len(parts) and parts[i]:
+        fname = parts[i]
+        fval = parts[i + 2]
+        fields[fname] = fval
+        i += 4
+
+    # Generate ID if '*'
+    if rid == b"*":
+        ts = int(time.time() * 1000)
+        seq = 0
+        if key in streams and streams[key]:
+            last_ts, last_seq = map(int, streams[key][-1]["id"].split(b"-"))
+            if ts <= last_ts:
+                ts = last_ts
+                seq = last_seq + 1
+        final_id = f"{ts}-{seq}".encode()
+    else:
+        final_id = rid
+        if key in streams and streams[key]:
+            last_ts, last_seq = map(int, streams[key][-1]["id"].split(b"-"))
+            cur_ts, cur_seq = map(int, final_id.split(b"-"))
+            if (cur_ts < last_ts) or (cur_ts == last_ts and cur_seq <= last_seq):
+                final_id = f"{last_ts}-{last_seq + 1}".encode()
+
+    streams.setdefault(key, [])
+    streams[key].append({"id": final_id, "fields": fields})
+
+    return string(final_id)
+
+
 def read(conn):
     global dictionary, streams
     data = conn.recv(1024)
@@ -237,7 +272,8 @@ def read(conn):
             conn.sendall(b"+QUEUED\r\n")
         else:
             conn.sendall(execute_type_command(data))
-            
+    elif b"XADD" in cmd:
+        conn.sendall(execute_xadd_command(data))
     elif b"MULTI" in cmd:
         transactions[conn] = {"in_multi": True, "queue": []}
         conn.sendall(b"+OK\r\n")
@@ -247,7 +283,6 @@ def read(conn):
             conn.sendall(b"+OK\r\n")
         else:
             conn.sendall(b"-ERR DISCARD without MULTI\r\n")
-
     elif b"EXEC" in cmd:
         if not is_in_multi(conn):
             conn.sendall(b"-ERR EXEC without MULTI\r\n")
