@@ -16,7 +16,6 @@ config = {
     'dbfilename': 'dump.rdb'
 }
 
-
 def load_rdb():
     """Very simple RDB loader: finds keys, values, and expirations."""
     global dictionary, expiration_times
@@ -194,59 +193,31 @@ def execute_config_get_command(data):
     return result
 
 
-# ---------- STREAMS IMPLEMENTATION ----------
-
-def execute_xadd_command(data):
-    global streams
-    parts = data.split(b"\r\n")
-    stream = parts[4]
-    entry_id = parts[6]
-    field = parts[8]
-    value = parts[10]
-
-    if stream not in streams:
-        streams[stream] = []
-
-    if entry_id == b"*":
-        ms = int(time.time() * 1000)
-        seq = len(streams[stream]) + 1
-        entry_id = f"{ms}-{seq}".encode()
-
-    entry = {
-        'id': entry_id,
-        'fields': {field: value}
-    }
-    streams[stream].append(entry)
-    return string(entry_id)
-
-
 def compare_ids(a, b):
     a_ms, a_seq = map(int, a.split(b'-'))
     b_ms, b_seq = map(int, b.split(b'-'))
-    return (a_ms > b_ms) - (a_ms < b_ms) or (a_seq > b_seq) - (a_seq < b_seq)
+    if a_ms != b_ms:
+        return a_ms - b_ms
+    return a_seq - b_seq
 
 
-def build_xread_response(stream_keys, resolved_ids):
-    outer = []
-    for stream, since_id in zip(stream_keys, resolved_ids):
+def build_xread_response(stream_keys, stream_ids):
+    response = b"*" + str(len(stream_keys)).encode() + b"\r\n"
+    for k, since_id in zip(stream_keys, stream_ids):
+        if k not in streams:
+            response += b"*2\r\n" + string(k) + b"*0\r\n"
+            continue
         entries = []
-        for e in streams.get(stream, []):
+        for e in streams[k]:
             if compare_ids(e['id'], since_id) > 0:
-                fv = []
-                for k, v in e['fields'].items():
-                    fv.append(string(k))
-                    fv.append(string(v))
-                fields_arr = b"*" + str(len(fv)).encode() + b"\r\n" + b"".join(fv)
-                entry = b"*2\r\n" + string(e['id']) + fields_arr
-                entries.append(entry)
-        if entries:
-            # FIX: Wrap entries in an array
-            arr = b"*2\r\n" + string(stream) + b"*" + str(len(entries)).encode() + b"\r\n" + b"".join(entries)
-            outer.append(arr)
-
-    if not outer:
-        return None
-    return b"*" + str(len(outer)).encode() + b"\r\n" + b"".join(outer)
+                entries.append(e)
+        response += b"*2\r\n" + string(k)
+        response += b"*" + str(len(entries)).encode() + b"\r\n"
+        for e in entries:
+            response += b"*2\r\n" + string(e['id']) + b"*" + str(len(e['fields'])).encode() + b"\r\n"
+            for field, value in e['fields'].items():
+                response += string(field) + string(value)
+    return response
 
 
 def execute_xread_command(data, conn):
@@ -263,8 +234,14 @@ def execute_xread_command(data, conn):
         return b"-ERR syntax error\r\n"
     sidx = uparts.index(b"STREAMS")
 
-    tail = parts[sidx + 2:]
-    tail = [t for t in tail if t != b""]
+    # FIX: remove RESP $len prefixes from the tail
+    raw_tail = parts[sidx + 2:]
+    tail = []
+    for idx in range(len(raw_tail)):
+        if raw_tail[idx].startswith(b"$"):
+            continue
+        if raw_tail[idx] != b"":
+            tail.append(raw_tail[idx])
 
     half = len(tail) // 2
     stream_keys = tail[:half]
@@ -278,8 +255,9 @@ def execute_xread_command(data, conn):
             resolved_ids.append(sid)
 
     resp = build_xread_response(stream_keys, resolved_ids)
-    if resp:
-        return resp
+    if resp and resp != b"*0\r\n":
+        conn.sendall(resp)
+        return None
 
     if block_ms is not None:
         expire_time = float('inf') if block_ms == 0 else time.time() + block_ms / 1000.0
@@ -288,8 +266,6 @@ def execute_xread_command(data, conn):
     else:
         return b"*0\r\n"
 
-
-# ---------------- READ LOOP -----------------
 
 def read(conn):
     global dictionary, streams
@@ -333,11 +309,9 @@ def read(conn):
             conn.sendall(b"+QUEUED\r\n")
         else:
             conn.sendall(execute_type_command(data))
-    elif b"XADD" in cmd:
-        conn.sendall(execute_xadd_command(data))
     elif b"XREAD" in cmd:
         resp = execute_xread_command(data, conn)
-        if resp is not None:
+        if resp:
             conn.sendall(resp)
     elif b"MULTI" in cmd:
         transactions[conn] = {"in_multi": True, "queue": []}
