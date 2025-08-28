@@ -16,83 +16,69 @@ config = {
     'dbfilename': 'dump.rdb'
 }
 def load_rdb():
-    """Properly parse RDB files: handles multiple keys, values, expirations."""
+    """Very simple RDB loader: finds keys, values, and expirations."""
     global dictionary, expiration_times
     dictionary.clear()
     expiration_times.clear()
 
-    rdb_path = os.path.join(config['dir'], config['dbfilename'])
-    if not os.path.exists(rdb_path):
+    path = os.path.join(config['dir'], config['dbfilename'])
+    if not os.path.exists(path):
         return
 
-    with open(rdb_path, "rb") as f:
-        data = f.read()
-
+    data = open(path, "rb").read()
     i = 0
-    if data[:5] == b"REDIS":
+
+    # 1. Skip header "REDISxxxx"
+    if data.startswith(b"REDIS"):
         i = 9
 
-    # Skip until FB marker (database section start)
+    # 2. Walk until we find the main table marker (0xFB)
     while i < len(data) and data[i] != 0xFB:
-        if data[i] == 0xFA:
-            name_len = data[i + 1]
-            i += 2 + name_len
-            val_len = data[i]
-            i += 1 + val_len
-            continue
-        if data[i] == 0xFE:
-            i += 2
-            continue
         i += 1
+    i += 3   # skip 0xFB + 2 size bytes
 
-    # Skip FB marker + 2 size bytes
-    i += 3
-
+    # 3. Now loop over entries
     while i < len(data):
-        if data[i] == 0xFF:
+        if data[i] == 0xFF:   # end of file
             break
 
         expire_ts = None
 
-        # Handle expiry markers
+        # Expiry in seconds (0xFD)
         if data[i] == 0xFD:
-            expire_ts = int.from_bytes(data[i + 1:i + 5], "little") * 1000
+            expire_ts = int.from_bytes(data[i+1:i+5], "little") * 1000
             i += 5
+        # Expiry in ms (0xFC)
         elif data[i] == 0xFC:
-            expire_ts = int.from_bytes(data[i + 1:i + 9], "little")
+            expire_ts = int.from_bytes(data[i+1:i+9], "little")
             i += 9
 
-        # Read TYPE byte (always present after expiry marker if any)
+        # Type byte (only handle strings = 0x00)
         type_byte = data[i]
         i += 1
-
-        # We only support string values (type 0x00)
         if type_byte != 0x00:
-            print(f"Unsupported type: {type_byte}")
-            return
+            # unknown type → stop parsing
+            break
 
-        # Read key
-        key_len = data[i]
-        i += 1
-        key = data[i:i + key_len]
-        i += key_len
+        # Key
+        key_len = data[i]; i += 1
+        key = data[i:i+key_len]; i += key_len
 
-        # Read value
-        val_len = data[i]
-        i += 1
-        value = data[i:i + val_len]
-        i += val_len
+        # Value
+        val_len = data[i]; i += 1
+        val = data[i:i+val_len]; i += val_len
 
-        # Skip expired keys immediately
-        if expire_ts is not None and expire_ts / 1000.0 <= time.time():
+        # If expired, skip it
+        if expire_ts and expire_ts/1000.0 <= time.time():
             continue
 
-        dictionary[key] = value
-        if expire_ts is not None:
-            expiration_times[key] = expire_ts / 1000.0
+        # Store
+        dictionary[key] = val
+        if expire_ts:
+            expiration_times[key] = expire_ts/1000.0
 
-    print("DEBUG: Loaded keys =", [k.decode() for k in dictionary])
-    print("DEBUG: Expirations =", {k.decode(): expiration_times[k] for k in expiration_times})
+    print("DEBUG: Loaded keys:", [k.decode() for k in dictionary])
+    print("DEBUG: Expirations:", {k.decode(): v for k,v in expiration_times.items()})
 
 
 def parsing(data):
