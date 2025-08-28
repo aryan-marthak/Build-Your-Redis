@@ -15,10 +15,8 @@ config = {
     'dir': '/tmp',
     'dbfilename': 'dump.rdb'
 }
-
-
 def load_rdb():
-    """RDB loader: supports multiple keys, values, and expirations."""
+    """Properly parse RDB files: handles multiple keys, values, expirations."""
     global dictionary, expiration_times
     dictionary.clear()
     expiration_times.clear()
@@ -31,46 +29,47 @@ def load_rdb():
         data = f.read()
 
     i = 0
-    # Skip REDIS header
     if data[:5] == b"REDIS":
         i = 9
 
-    # Skip until FB marker
+    # Skip until FB marker (database section start)
     while i < len(data) and data[i] != 0xFB:
-        # Handle metadata
         if data[i] == 0xFA:
             name_len = data[i + 1]
             i += 2 + name_len
             val_len = data[i]
             i += 1 + val_len
             continue
-        # Database selector
         if data[i] == 0xFE:
             i += 2
             continue
         i += 1
 
-    # Skip FB marker + 2 hash table size bytes
+    # Skip FB marker + 2 size bytes
     i += 3
 
-    # Parse key-value pairs until EOF marker 0xFF
     while i < len(data):
         if data[i] == 0xFF:
             break
 
         expire_ts = None
 
-        # Expiration opcodes
-        if data[i] == 0xFD:  # expire in seconds
+        # Handle expiry markers
+        if data[i] == 0xFD:
             expire_ts = int.from_bytes(data[i + 1:i + 5], "little") * 1000
             i += 5
-        elif data[i] == 0xFC:  # expire in milliseconds
+        elif data[i] == 0xFC:
             expire_ts = int.from_bytes(data[i + 1:i + 9], "little")
             i += 9
 
-        # Skip optional type byte
-        if data[i] == 0x00:
-            i += 1
+        # Read TYPE byte (always present after expiry marker if any)
+        type_byte = data[i]
+        i += 1
+
+        # We only support string values (type 0x00)
+        if type_byte != 0x00:
+            print(f"Unsupported type: {type_byte}")
+            return
 
         # Read key
         key_len = data[i]
@@ -84,18 +83,14 @@ def load_rdb():
         value = data[i:i + val_len]
         i += val_len
 
-        # If expired already → skip storing
+        # Skip expired keys immediately
         if expire_ts is not None and expire_ts / 1000.0 <= time.time():
             continue
 
-        # Store key-value
         dictionary[key] = value
-
-        # Store expiry if future timestamp
         if expire_ts is not None:
             expiration_times[key] = expire_ts / 1000.0
 
-    # Debugging
     print("DEBUG: Loaded keys =", [k.decode() for k in dictionary])
     print("DEBUG: Expirations =", {k.decode(): expiration_times[k] for k in expiration_times})
 
