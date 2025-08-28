@@ -178,10 +178,19 @@ def execute_xread_command(data, conn):
         else:
             resolved_ids.append(sid)
 
-    # Try sending data now
-    resp = build_xread_response(stream_keys, resolved_ids)
-    if resp != b"*0\r\n":
-        return resp
+    # Check if any streams have new entries
+    has_new_entries = False
+    for key, last_id in zip(stream_keys, resolved_ids):
+        for entry in streams.get(key, []):
+            if compare_ids(entry["id"], last_id) > 0:
+                has_new_entries = True
+                break
+        if has_new_entries:
+            break
+
+    # If we have new entries, return them immediately
+    if has_new_entries:
+        return build_xread_response(stream_keys, resolved_ids)
 
     # No data, block if requested
     if block_ms is not None:
