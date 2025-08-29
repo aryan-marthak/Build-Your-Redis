@@ -129,19 +129,29 @@ def get_max_id_in_stream(stream_key):
     max_entry = max(streams[stream_key], key=lambda e: tuple(map(int, e['id'].split(b'-'))))
     return max_entry['id']
 
-
 def generate_next_id(stream_key, raw_id=None):
-    # Handles partial IDs like "1234-*"
-    if raw_id and raw_id.endswith(b"-*"):
+    # Fully auto-generated ID "*"
+    if raw_id is None or raw_id == b"*":
+        ms = int(time.time() * 1000)
+        existing = [e for e in streams.get(stream_key, []) if int(e["id"].split(b"-")[0]) == ms]
+        if existing:
+            seq = max(int(e["id"].split(b"-")[1]) for e in existing) + 1
+        else:
+            seq = 0  # Fully auto starts at 0
+        return f"{ms}-{seq}".encode()
+
+    # Partially auto-generated ID "ms-*"
+    if raw_id.endswith(b"-*"):
         ms = int(raw_id.split(b"-")[0])
         existing = [e for e in streams.get(stream_key, []) if int(e["id"].split(b"-")[0]) == ms]
         if existing:
             seq = max(int(e["id"].split(b"-")[1]) for e in existing) + 1
         else:
-            seq = 0  # ✅ FIX: Start from 0 if no existing entries
+            seq = 1  # ✅ Partial auto starts at 1
         return f"{ms}-{seq}".encode()
 
-
+    # Fixed ID, just return as-is
+    return raw_id
 
 def compare_ids(id1, id2):
     ms1, seq1 = map(int, id1.split(b"-"))
