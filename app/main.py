@@ -224,36 +224,38 @@ def execute_xread_command(data, conn):
     else:
         return b"*0\r\n"
 
-
 def execute_xadd_command(args):
     stream_key = args[0]
     raw_id = args[1]
 
-    # Handle auto-generated IDs when client passes "*"
+    # Auto-generate ID if client sends "*"
     if raw_id == b"*":
         ms = int(time.time() * 1000)
         seq = 0
-        # If the stream already has entries, ensure ID ordering
+        # If stream already has entries, check for same millisecond
         if stream_key in streams and streams[stream_key]:
             last_id = list(streams[stream_key].keys())[-1]
             last_ms, last_seq = map(int, last_id.split(b"-"))
             if ms == last_ms:
                 seq = last_seq + 1
+        # ALWAYS encode to bytes
         entry_id = f"{ms}-{seq}".encode()
     else:
         entry_id = raw_id
 
-    # Parse field-value pairs
+    # Parse fields & values
     fields = {}
     for i in range(2, len(args), 2):
         fields[args[i]] = args[i + 1]
 
-    # Store entry in stream
+    # Initialize stream if not exists
     if stream_key not in streams:
         streams[stream_key] = {}
     streams[stream_key][entry_id] = fields
 
+    # Ensure we always return bytes to string()
     return string(entry_id)
+
 
 
 def is_in_multi(conn):
