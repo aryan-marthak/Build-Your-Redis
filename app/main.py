@@ -294,53 +294,48 @@ def execute_xread_command(data, conn):
 
 
 def execute_xadd_command(data):
-    # Parse the RESP command to extract arguments
     args = parse_resp_array(data)
-    
-    if len(args) < 4:  # Need at least XADD, stream_key, id, field, value
+    if len(args) < 4:
         return b"-ERR wrong number of arguments\r\n"
     
-    stream_key = args[1]  # args[0] is "XADD"
+    stream_key = args[1]
     raw_id = args[2]
 
-    # Auto-generate ID if client sends "*"
+    # Generate entry ID
     if raw_id == b"*":
-        ms = int(time.time() * 1000)
-        seq = 0
-        if stream_key in streams and streams[stream_key]:
-            last_id = streams[stream_key][-1]["id"]
-            last_ms, last_seq = map(int, last_id.split(b"-"))
-            if ms == last_ms:
-                seq = last_seq + 1
-        entry_id = f"{ms}-{seq}".encode()
-
-    # Handle partially auto-generated IDs like "0-*"
+        entry_id = generate_next_id(stream_key)
     elif raw_id.endswith(b"-*"):
         entry_id = generate_next_id(stream_key, raw_id)
-
     else:
         entry_id = raw_id
 
-    # Parse fields & values (starting from args[3])
+    # Validate strictly increasing IDs
+    if stream_key in streams and streams[stream_key]:
+        last_id = streams[stream_key][-1]["id"]
+        last_ms, last_seq = map(int, last_id.split(b"-"))
+        new_ms, new_seq = map(int, entry_id.split(b"-"))
+
+        # Reject duplicates or lower IDs
+        if new_ms < last_ms or (new_ms == last_ms and new_seq <= last_seq):
+            return b"-ERR The ID specified in XADD is equal or smaller than the target stream top item\r\n"
+
+    # Parse fields
     fields = {}
     for i in range(3, len(args), 2):
         if i + 1 < len(args):
             fields[args[i]] = args[i + 1]
 
-    # Initialize stream if not exists - use list to maintain order
     if stream_key not in streams:
         streams[stream_key] = []
-    
-    # Add entry to stream
+
+    # Add entry
     entry = {"id": entry_id, "fields": fields}
     streams[stream_key].append(entry)
 
-    # Notify blocked clients waiting for this stream
+    # Notify blocked clients
     notify_blocked_clients(stream_key)
 
     return string(entry_id)
-
-
 
 def is_in_multi(conn):
     return conn in transactions and transactions[conn]["in_multi"]
