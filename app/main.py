@@ -137,7 +137,7 @@ def generate_next_id(stream_key, raw_id=None):
         if existing:
             seq = max(int(e["id"].split(b"-")[1]) for e in existing) + 1
         else:
-            seq = 0  # Fully auto starts at 0
+            seq = 0
         return f"{ms}-{seq}".encode()
 
     # Partially auto-generated ID "ms-*"
@@ -147,11 +147,13 @@ def generate_next_id(stream_key, raw_id=None):
         if existing:
             seq = max(int(e["id"].split(b"-")[1]) for e in existing) + 1
         else:
-            seq = 1  # ✅ Partial auto starts at 1
+            # Special rule: if ms == 0, first ID is "0-1"
+            seq = 1 if ms == 0 else 0
         return f"{ms}-{seq}".encode()
 
-    # Fixed ID, just return as-is
+    # Fixed ID
     return raw_id
+
 
 def compare_ids(id1, id2):
     ms1, seq1 = map(int, id1.split(b"-"))
