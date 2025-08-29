@@ -90,6 +90,29 @@ def parsing(data):
     return None
 
 
+def parse_resp_array(data):
+    """Parse RESP array format and return list of arguments."""
+    parts = data.split(b"\r\n")
+    args = []
+    i = 0
+    
+    # Skip the array header (*N)
+    if i < len(parts) and parts[i].startswith(b"*"):
+        i += 1
+    
+    while i < len(parts):
+        if parts[i].startswith(b"$") and i + 1 < len(parts):
+            # Bulk string: $length\r\ndata\r\n
+            args.append(parts[i + 1])
+            i += 2
+        elif parts[i] == b"":
+            i += 1
+        else:
+            i += 1
+    
+    return args
+
+
 def string(words):
     return b"$" + str(len(words)).encode() + b"\r\n" + words + b"\r\n"
 
@@ -225,9 +248,15 @@ def execute_xread_command(data, conn):
         return b"*0\r\n"
 
 
-def execute_xadd_command(args):
-    stream_key = args[0]
-    raw_id = args[1]
+def execute_xadd_command(data):
+    # Parse the RESP command to extract arguments
+    args = parse_resp_array(data)
+    
+    if len(args) < 4:  # Need at least XADD, stream_key, id, field, value
+        return b"-ERR wrong number of arguments\r\n"
+    
+    stream_key = args[1]  # args[0] is "XADD"
+    raw_id = args[2]
 
     # Auto-generate ID if client sends "*"
     if raw_id == b"*":
@@ -235,28 +264,32 @@ def execute_xadd_command(args):
         seq = 0
         # If stream already has entries, check for same millisecond
         if stream_key in streams and streams[stream_key]:
-            last_id = list(streams[stream_key].keys())[-1]
-            last_ms, last_seq = map(int, last_id.split(b"-"))
-            if ms == last_ms:
-                seq = last_seq + 1
-        # ALWAYS encode to bytes
+            # Convert dict keys to list and get the last entry
+            entry_ids = list(streams[stream_key].keys())
+            if entry_ids:
+                last_id = entry_ids[-1]
+                last_ms, last_seq = map(int, last_id.split(b"-"))
+                if ms == last_ms:
+                    seq = last_seq + 1
         entry_id = f"{ms}-{seq}".encode()
     else:
         entry_id = raw_id
 
-    # Parse fields & values
+    # Parse fields & values (starting from args[3])
     fields = {}
-    for i in range(2, len(args), 2):
-        fields[args[i]] = args[i + 1]
+    for i in range(3, len(args), 2):
+        if i + 1 < len(args):
+            fields[args[i]] = args[i + 1]
 
-    # Initialize stream if not exists
+    # Initialize stream if not exists - use list to maintain order
     if stream_key not in streams:
-        streams[stream_key] = {}
-    streams[stream_key][entry_id] = fields
+        streams[stream_key] = []
+    
+    # Add entry to stream
+    entry = {"id": entry_id, "fields": fields}
+    streams[stream_key].append(entry)
 
-    # Ensure we always return bytes to string()
     return string(entry_id)
-
 
 
 def is_in_multi(conn):
