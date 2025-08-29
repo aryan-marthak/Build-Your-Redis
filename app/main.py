@@ -309,13 +309,18 @@ def execute_xadd_command(data):
     else:
         entry_id = raw_id
 
+    # Parse entry_id into ms and seq
+    new_ms, new_seq = map(int, entry_id.split(b"-"))
+
+    # ✅ Special check: Redis forbids 0-0
+    if new_ms == 0 and new_seq == 0:
+        return b"-ERR The ID specified in XADD must be greater than 0-0\r\n"
+
     # Validate strictly increasing IDs
     if stream_key in streams and streams[stream_key]:
         last_id = streams[stream_key][-1]["id"]
         last_ms, last_seq = map(int, last_id.split(b"-"))
-        new_ms, new_seq = map(int, entry_id.split(b"-"))
 
-        # Reject duplicates or lower IDs
         if new_ms < last_ms or (new_ms == last_ms and new_seq <= last_seq):
             return b"-ERR The ID specified in XADD is equal or smaller than the target stream top item\r\n"
 
@@ -328,14 +333,13 @@ def execute_xadd_command(data):
     if stream_key not in streams:
         streams[stream_key] = []
 
-    # Add entry
     entry = {"id": entry_id, "fields": fields}
     streams[stream_key].append(entry)
 
-    # Notify blocked clients
     notify_blocked_clients(stream_key)
 
     return string(entry_id)
+
 
 def is_in_multi(conn):
     return conn in transactions and transactions[conn]["in_multi"]
