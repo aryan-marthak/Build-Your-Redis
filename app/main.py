@@ -164,6 +164,37 @@ def build_xread_response(stream_keys, resolved_ids):
     return result
 
 
+def notify_blocked_clients(stream_key):
+    """Check if any blocked clients should be notified about new entries."""
+    clients_to_remove = []
+    
+    for conn, (expire_time, stream_keys, resolved_ids) in blocking_clients.items():
+        if stream_key in stream_keys:
+            # Check if there are new entries for this client
+            has_new_entries = False
+            for key, last_id in zip(stream_keys, resolved_ids):
+                if key == stream_key:
+                    for entry in streams.get(key, []):
+                        if compare_ids(entry["id"], last_id) > 0:
+                            has_new_entries = True
+                            break
+                    break
+            
+            if has_new_entries:
+                # Send response to blocked client
+                response = build_xread_response(stream_keys, resolved_ids)
+                try:
+                    conn.sendall(response)
+                    clients_to_remove.append(conn)
+                except:
+                    # Connection might be closed
+                    clients_to_remove.append(conn)
+    
+    # Remove notified clients from blocking list
+    for conn in clients_to_remove:
+        blocking_clients.pop(conn, None)
+
+
 def execute_xrange_command(data):
     parts = data.split(b"\r\n")
     stream_key = parts[4]
@@ -289,6 +320,9 @@ def execute_xadd_command(data):
     entry = {"id": entry_id, "fields": fields}
     streams[stream_key].append(entry)
 
+    # CRITICAL FIX: Notify any blocked clients waiting for this stream
+    notify_blocked_clients(stream_key)
+
     return string(entry_id)
 
 
@@ -385,8 +419,10 @@ def check_blocked_timeouts():
     expired_clients = []
     for conn, (expire_time, stream_keys, resolved_ids) in blocking_clients.items():
         if current_time >= expire_time:
-            # FIX: send null array instead of null bulk string
-            conn.sendall(b"*-1\r\n")
+            try:
+                conn.sendall(b"*-1\r\n")
+            except:
+                pass  # Connection might be closed
             expired_clients.append(conn)
     for conn in expired_clients:
         blocking_clients.pop(conn, None)
@@ -394,8 +430,15 @@ def check_blocked_timeouts():
 
 def read(conn):
     global dictionary, streams
-    data = conn.recv(1024)
-    if not data:
+    try:
+        data = conn.recv(1024)
+        if not data:
+            sel.unregister(conn)
+            conn.close()
+            transactions.pop(conn, None)
+            blocking_clients.pop(conn, None)
+            return
+    except:
         sel.unregister(conn)
         conn.close()
         transactions.pop(conn, None)
