@@ -225,38 +225,33 @@ def execute_xread_command(data, conn):
         return b"*0\r\n"
 
 
-def execute_xadd_command(data):
-    global streams, blocking_clients
-    parts = data.split(b"\r\n")
-    stream_key = parts[4]
-    raw_id = parts[6]
-    field = parts[8]
-    value = parts[10]
+def execute_xadd_command(args):
+    stream_key = args[0]
+    raw_id = args[1]
 
+    # Handle auto-generated IDs when client passes "*"
     if raw_id == b"*":
-        entry_id = generate_next_id(stream_key)
-    elif raw_id.endswith(b"-*"):
-        entry_id = generate_next_id(stream_key, raw_id)
+        ms = int(time.time() * 1000)
+        seq = 0
+        # If the stream already has entries, ensure ID ordering
+        if stream_key in streams and streams[stream_key]:
+            last_id = list(streams[stream_key].keys())[-1]
+            last_ms, last_seq = map(int, last_id.split(b"-"))
+            if ms == last_ms:
+                seq = last_seq + 1
+        entry_id = f"{ms}-{seq}".encode()
     else:
         entry_id = raw_id
 
-    streams.setdefault(stream_key, [])
-    entry = {"id": entry_id, "fields": {field: value}}
-    streams[stream_key].append(entry)
+    # Parse field-value pairs
+    fields = {}
+    for i in range(2, len(args), 2):
+        fields[args[i]] = args[i + 1]
 
-    # unblock clients waiting on this stream
-    to_unblock = []
-    for conn, (expire_time, keys, ids) in blocking_clients.items():
-        if stream_key in keys:
-            idx = keys.index(stream_key)
-            last_id = ids[idx]
-            if compare_ids(entry_id, last_id) > 0:
-                resp = build_xread_response([stream_key], [last_id])
-                conn.sendall(resp)
-                to_unblock.append(conn)
-
-    for conn in to_unblock:
-        blocking_clients.pop(conn, None)
+    # Store entry in stream
+    if stream_key not in streams:
+        streams[stream_key] = {}
+    streams[stream_key][entry_id] = fields
 
     return string(entry_id)
 
