@@ -293,16 +293,17 @@ def execute_xadd_command(data):
     if raw_id == b"*":
         ms = int(time.time() * 1000)
         seq = 0
-        # If stream already has entries, check for same millisecond
         if stream_key in streams and streams[stream_key]:
-            # Convert dict keys to list and get the last entry
-            entry_ids = list(streams[stream_key].keys())
-            if entry_ids:
-                last_id = entry_ids[-1]
-                last_ms, last_seq = map(int, last_id.split(b"-"))
-                if ms == last_ms:
-                    seq = last_seq + 1
+            last_id = streams[stream_key][-1]["id"]
+            last_ms, last_seq = map(int, last_id.split(b"-"))
+            if ms == last_ms:
+                seq = last_seq + 1
         entry_id = f"{ms}-{seq}".encode()
+
+    # Handle partially auto-generated IDs like "0-*"
+    elif raw_id.endswith(b"-*"):
+        entry_id = generate_next_id(stream_key, raw_id)
+
     else:
         entry_id = raw_id
 
@@ -320,10 +321,11 @@ def execute_xadd_command(data):
     entry = {"id": entry_id, "fields": fields}
     streams[stream_key].append(entry)
 
-    # CRITICAL FIX: Notify any blocked clients waiting for this stream
+    # Notify blocked clients waiting for this stream
     notify_blocked_clients(stream_key)
 
     return string(entry_id)
+
 
 
 def is_in_multi(conn):
