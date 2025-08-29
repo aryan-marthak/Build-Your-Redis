@@ -131,14 +131,16 @@ def get_max_id_in_stream(stream_key):
 
 
 def generate_next_id(stream_key, raw_id=None):
+    # Handles partial IDs like "1234-*"
     if raw_id and raw_id.endswith(b"-*"):
         ms = int(raw_id.split(b"-")[0])
         existing = [e for e in streams.get(stream_key, []) if int(e["id"].split(b"-")[0]) == ms]
         if existing:
             seq = max(int(e["id"].split(b"-")[1]) for e in existing) + 1
         else:
-            seq = 1
+            seq = 0  # ✅ FIX: Start from 0 if no existing entries
         return f"{ms}-{seq}".encode()
+
 
 
 def compare_ids(id1, id2):
