@@ -428,6 +428,18 @@ def execute_RPUSH_command(data):
     length = len(lists[key])
     return b":" + str(length).encode() + b"\r\n"
 
+def execute_LPUSH_command(data):
+    global lists
+    split = data.split(b"\r\n")
+    key = split[4]
+    values = [split[i] for i in range(6, len(split) - 1, 2)]
+    if key in lists:
+        lists[key] = list(reversed(values)) + lists[key]
+    else:
+        lists[key] = list(reversed(values))
+    length = len(lists[key])
+    return b":" + str(length).encode() + b"\r\n"
+
 def execute_LRANGE_command(data):
     global lists
     split = data.split(b"\r\n")
