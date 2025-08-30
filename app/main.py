@@ -422,7 +422,10 @@ def execute_RPUSH_command(data):
     split = data.split(b"\r\n")
     key = split[4]
     values = split[6]
-    lists[key] = [values]
+    if lists[key]:
+        lists[key].append(values)
+    else:
+        lists[key] = [values]
     length = len(lists[key])
     return b":" + str(length).encode() + b"\r\n"
 
