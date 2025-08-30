@@ -10,6 +10,7 @@ expiration_times = {}
 streams = {}
 blocking_clients = {}
 transactions = {}
+lists = {}
 
 config = {
     'dir': '/tmp',
@@ -161,6 +162,7 @@ def compare_ids(id1, id2):
     if ms1 != ms2:
         return ms1 - ms2
     return seq1 - seq2
+
 
 
 def build_xread_response(stream_keys, resolved_ids):
@@ -415,6 +417,14 @@ def execute_type_command(data):
         return b'+string\r\n'
     return b"+none\r\n"
 
+def execute_RPUSH_command(data):
+    global lists
+    split = data.split(b"\r\n")
+    key = split[4]
+    values = split[6]
+    lists[key] = [values]
+    length = len(lists[key])
+    return b":" + str(length).encode() + b"\r\n"
 
 def execute_config_get_command(data):
     split = data.split(b"\r\n")
@@ -444,7 +454,7 @@ def check_blocked_timeouts():
 
 
 def read(conn):
-    global dictionary, streams
+    global dictionary, streams, lists
     try:
         data = conn.recv(1024)
         if not data:
@@ -486,6 +496,12 @@ def read(conn):
             conn.sendall(b"+QUEUED\r\n")
         else:
             conn.sendall(execute_incr_command(data))
+    elif b"RPUSH" in cmd:
+        if is_in_multi(conn):
+            enqueue(conn, 'RPUSH', data)
+            conn.sendall(b"+QUEUED\r\n")
+        else:
+            conn.sendall(execute_RPUSH_command(data))
     elif b"TYPE" in cmd:
         if is_in_multi(conn):
             enqueue(conn, 'TYPE', data)
