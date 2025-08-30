@@ -422,7 +422,7 @@ def execute_RPUSH_command(data):
     key = split[4]
     values = [split[i] for i in range(6, len(split) - 1, 2)]
     if key in lists:
-        lists[key].append(values)
+        lists[key].extend(values)
     else:
         lists[key] = [values]
     length = len(lists[key])
