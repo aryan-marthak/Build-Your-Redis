@@ -428,6 +428,17 @@ def execute_RPUSH_command(data):
     length = len(lists[key])
     return b":" + str(length).encode() + b"\r\n"
 
+def execute_LRANGE_command(data):
+    global lists
+    split = data.split(b"\r\n")
+    key = split[4]
+    start = int(split[6])
+    end = int(split[8])
+    if key in lists:
+        values = lists[key][start:end + 1]
+        return b"*" + str(len(values)).encode() + b"\r\n" + b"".join(string(v) for v in values)
+    return b"*0\r\n"
+
 def execute_config_get_command(data):
     split = data.split(b"\r\n")
     param = split[6]
