@@ -434,10 +434,25 @@ def execute_LRANGE_command(data):
     key = split[4]
     start = int(split[6])
     end = int(split[8])
-    if key in lists:
-        values = lists[key][start:end + 1]
-        return b"*" + str(len(values)).encode() + b"\r\n" + b"".join(string(v) for v in values)
-    return b"*0\r\n"
+    if key not in lists:
+        return b"*0\r\n"
+    values = lists[key]
+    if start < 0:
+        start += len(values)
+    if end < 0:
+        end += len(values)
+    start = max(0, start)
+    end = min(end, len(values) - 1)
+    
+    if start > end or start >= len(values):
+        return b"*0\r\n"
+
+    result = values[start:end + 1]
+    return b"*" + str(len(result)).encode() + b"\r\n" + b"".join(string(v) for v in result)
+    # if key in lists:
+    #     values = lists[key][start:end + 1]
+    #     return b"*" + str(len(values)).encode() + b"\r\n" + b"".join(string(v) for v in values)
+    # return b"*0\r\n"
 
 def execute_config_get_command(data):
     split = data.split(b"\r\n")
