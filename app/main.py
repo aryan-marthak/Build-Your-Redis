@@ -420,7 +420,7 @@ def execute_RPUSH_command(data):
     global lists
     split = data.split(b"\r\n")
     key = split[4]
-    values = split[6:]
+    values = [split[i] for i in range(6, len(split) - 1, 2)]
     if key in lists:
         lists[key].append(values)
     else:
