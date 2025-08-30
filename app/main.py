@@ -404,7 +404,6 @@ def execute_incr_command(data):
     dictionary[key] = b"1"
     return b":1\r\n"
 
-
 def execute_type_command(data):
     split = data.split(b"\r\n")
     key = split[4]
@@ -422,7 +421,7 @@ def execute_RPUSH_command(data):
     split = data.split(b"\r\n")
     key = split[4]
     values = split[6]
-    if lists[key]:
+    if key in lists:
         lists[key].append(values)
     else:
         lists[key] = [values]
