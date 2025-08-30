@@ -503,6 +503,12 @@ def read(conn):
             conn.sendall(b"+QUEUED\r\n")
         else:
             conn.sendall(execute_get_command(data))
+    elif b"LRANGE" in cmd:
+        if is_in_multi(conn):
+            enqueue(conn, 'LRANGE', data)
+            conn.sendall(b"+QUEUED\r\n")
+        else:
+            conn.sendall(execute_LRANGE_command(data))
     elif b"INCR" in cmd:
         if is_in_multi(conn):
             enqueue(conn, 'INCR', data)
