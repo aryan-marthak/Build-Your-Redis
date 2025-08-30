@@ -424,7 +424,7 @@ def execute_RPUSH_command(data):
     if key in lists:
         lists[key].extend(values)
     else:
-        lists[key] = [values]
+        lists[key] = values
     length = len(lists[key])
     return b":" + str(length).encode() + b"\r\n"
 
