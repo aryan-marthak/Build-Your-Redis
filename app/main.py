@@ -465,6 +465,14 @@ def execute_LRANGE_command(data):
     #     values = lists[key][start:end + 1]
     #     return b"*" + str(len(values)).encode() + b"\r\n" + b"".join(string(v) for v in values)
     # return b"*0\r\n"
+    
+def execute_LLEN_command(data):
+    split = data.split(b"\r\n")
+    key = split[4]
+    if key not in lists:
+        return b":0\r\n"
+    length = len(lists[key])
+    return b":" + str(length).encode() + b"\r\n"
 
 def execute_config_get_command(data):
     split = data.split(b"\r\n")
@@ -536,6 +544,12 @@ def read(conn):
             conn.sendall(b"+QUEUED\r\n")
         else:
             conn.sendall(execute_LRANGE_command(data))
+    elif b"LLEN" in cmd:
+        if is_in_multi(conn):
+            enqueue(conn, 'LLEN', data)
+            conn.sendall(b"+QUEUED\r\n")
+        else:
+            conn.sendall(execute_LLEN_command(data))
     elif b"LPUSH" in cmd:
         if is_in_multi(conn):
             enqueue(conn, 'LPUSH', data)
