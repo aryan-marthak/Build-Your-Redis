@@ -474,6 +474,14 @@ def execute_LLEN_command(data):
     length = len(lists[key])
     return b":" + str(length).encode() + b"\r\n"
 
+def execute_LPOP_command(data):
+    split = data.split(b"\r\n")
+    key = split[4]
+    if key not in lists or len(lists[key]) == 0:
+        return b"$-1\r\n"
+    popped = lists[key].pop(0)
+    return b":" + string(popped) + b"\r\n"
+
 def execute_config_get_command(data):
     split = data.split(b"\r\n")
     param = split[6]
@@ -550,6 +558,12 @@ def read(conn):
             conn.sendall(b"+QUEUED\r\n")
         else:
             conn.sendall(execute_LLEN_command(data))
+    elif b"LPOP" in cmd:
+        if is_in_multi(conn):
+            enqueue(conn, 'LPOP', data)
+            conn.sendall(b"+QUEUED\r\n")
+        else:
+            conn.sendall(execute_LPOP_command(data))
     elif b"LPUSH" in cmd:
         if is_in_multi(conn):
             enqueue(conn, 'LPUSH', data)
