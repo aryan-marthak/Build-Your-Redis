@@ -480,7 +480,7 @@ def execute_LPOP_command(data):
     if key not in lists or len(lists[key]) == 0:
         return b"$-1\r\n"
     popped = lists[key].pop(0)
-    return b":" + string(popped) + b"\r\n"
+    return string(popped)
 
 def execute_config_get_command(data):
     split = data.split(b"\r\n")
