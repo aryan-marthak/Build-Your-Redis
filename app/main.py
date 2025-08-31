@@ -477,10 +477,29 @@ def execute_LLEN_command(data):
 def execute_LPOP_command(data):
     split = data.split(b"\r\n")
     key = split[4]
+    
+    count = 1
+    if len(split) > 6:
+        try:
+            count = int(split[6])
+        except (ValueError, IndexError):
+            count = 1
+    
     if key not in lists or len(lists[key]) == 0:
         return b"$-1\r\n"
-    popped = lists[key].pop(0)
-    return string(popped)
+    
+    if count == 1:
+        popped = lists[key].pop(0)
+        return string(popped)
+    
+    popped_items = []
+    min_count = min(count, len(lists[key]))
+    for _ in range(min_count):
+        popped_items.append(lists[key].pop(0))
+    result = f"*{len(popped_items)}\r\n".encode() 
+    for i in popped_items:
+        result += string(i)
+    return result
 
 def execute_config_get_command(data):
     split = data.split(b"\r\n")
