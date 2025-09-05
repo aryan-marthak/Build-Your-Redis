@@ -513,6 +513,18 @@ def execute_config_get_command(data):
     result = b"*2\r\n" + string(param) + string(value)
     return result
 
+def execute_BLPOP_command(data, conn):
+    split = data.split(b"\r\n")
+    key = split[4]
+    timeout = int(split[6]) if len(split) > 6 else 0
+    
+    if key in lists and len(lists[key]) > 0:
+        value = lists[key].pop(0)
+        return b"*2\r\n" + string(key) + string(value)
+
+    expiry_time = float('inf') 
+    blocking_clients[conn] = (expiry_time, [key], None)
+    return None
 
 def check_blocked_timeouts():
     current_time = time.time()
