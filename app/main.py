@@ -607,7 +607,9 @@ def read(conn):
             enqueue(conn, 'BLPOP', data)
             conn.sendall(b"+QUEUED\r\n")
         else:
-            conn.sendall(execute_BLPOP_command(data, conn))
+            resp = execute_BLPOP_command(data, conn)
+            if resp:
+                conn.sendall(resp)
     elif b"LRANGE" in cmd:
         if is_in_multi(conn):
             enqueue(conn, 'LRANGE', data)
