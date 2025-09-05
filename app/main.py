@@ -11,6 +11,7 @@ streams = {}
 blocking_clients = {}
 transactions = {}
 lists = {}
+list_blocking_clients = {}
 
 config = {
     'dir': '/tmp',
@@ -346,6 +347,25 @@ def execute_xadd_command(data):
 def is_in_multi(conn):
     return conn in transactions and transactions[conn]["in_multi"]
 
+def notify_blpop_clients(key):
+    global list_blocking_clients, lists
+    to_remove = []
+
+    # Serve the longest-waiting client first
+    for conn, info in sorted(list_blocking_clients.items(), key=lambda x: x[1]["start_time"]):
+        if info["key"] == key and key in lists and len(lists[key]) > 0:
+            value = lists[key].pop(0)
+            resp = b"*2\r\n" + string(key) + string(value)
+            try:
+                conn.sendall(resp)
+            except:
+                pass
+            to_remove.append(conn)
+            break  # Serve one client only (FIFO)
+
+    # Remove served clients
+    for conn in to_remove:
+        list_blocking_clients.pop(conn, None)
 
 def enqueue(conn, cmd, data):
     transactions.setdefault(conn, {"in_multi": True, "queue": []})
@@ -426,6 +446,7 @@ def execute_RPUSH_command(data):
     else:
         lists[key] = values
     length = len(lists[key])
+    notify_blpop_clients(key)
     return b":" + str(length).encode() + b"\r\n"
 
 def execute_LPUSH_command(data):
@@ -438,6 +459,7 @@ def execute_LPUSH_command(data):
     else:
         lists[key] = list(reversed(values))
     length = len(lists[key])
+    notify_blpop_clients(key)
     return b":" + str(length).encode() + b"\r\n"
 
 def execute_LRANGE_command(data):
@@ -514,6 +536,7 @@ def execute_config_get_command(data):
     return result
 
 def execute_BLPOP_command(data, conn):
+    global lists, list_blocking_clients
     split = data.split(b"\r\n")
     key = split[4]
     timeout = int(split[6]) if len(split) > 6 else 0
@@ -522,8 +545,10 @@ def execute_BLPOP_command(data, conn):
         value = lists[key].pop(0)
         return b"*2\r\n" + string(key) + string(value)
 
-    expiry_time = float('inf') 
-    blocking_clients[conn] = (expiry_time, [key], None)
+    list_blocking_clients[conn] = {
+        'key': key,
+        'start_time': time.time(),
+    }
     return None
 
 def check_blocked_timeouts():
@@ -577,6 +602,12 @@ def read(conn):
             conn.sendall(b"+QUEUED\r\n")
         else:
             conn.sendall(execute_get_command(data))
+    elif b"BLPOP" in cmd:
+        if is_in_multi(conn):
+            enqueue(conn, 'BLPOP', data)
+            conn.sendall(b"+QUEUED\r\n")
+        else:
+            conn.sendall(execute_BLPOP_command(data, conn))
     elif b"LRANGE" in cmd:
         if is_in_multi(conn):
             enqueue(conn, 'LRANGE', data)
