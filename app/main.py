@@ -561,7 +561,7 @@ def execute_BLPOP_command(data, conn):
     }
     return None
 
-def execute_SUBSCRIBE_command(data):
+def execute_SUBSCRIBE_command(data, conn):
     split = data.split(b"\r\n")
     channel = split[4]
     resp  = b"*3\r\n"
@@ -633,7 +633,7 @@ def read(conn):
         else:
             conn.sendall(execute_set_command(data))
     elif b"SUBSCRIBE" in cmd:
-        conn.sendall(b"-ERR SUBSCRIBE not implemented\r\n")
+        conn.sendall(execute_SUBSCRIBE_command(data, conn))
     elif b"GET" in cmd:
         if is_in_multi(conn):
             enqueue(conn, 'GET', data)
