@@ -539,17 +539,28 @@ def execute_BLPOP_command(data, conn):
     global lists, list_blocking_clients
     split = data.split(b"\r\n")
     key = split[4]
-    timeout = int(split[6]) if len(split) > 6 else 0
-    
+
+    # support fractional seconds
+    timeout = 0.0
+    if len(split) > 6:
+        try:
+            timeout = float(split[6].decode())
+        except Exception:
+            timeout = 0.0  # treat bad input like 0 (block forever)
+
+    # immediate reply if item exists
     if key in lists and len(lists[key]) > 0:
         value = lists[key].pop(0)
         return b"*2\r\n" + string(key) + string(value)
 
+    # otherwise block; 0 -> forever
     list_blocking_clients[conn] = {
         'key': key,
         'start_time': time.time(),
+        'expire_time': float('inf') if timeout == 0 else time.time() + timeout,
     }
     return None
+
 
 def check_blocked_timeouts():
     current_time = time.time()
@@ -563,6 +574,19 @@ def check_blocked_timeouts():
             expired_clients.append(conn)
     for conn in expired_clients:
         blocking_clients.pop(conn, None)
+        
+    # BLPOP timeouts
+    expired_bl = []
+    for conn, info in list(list_blocking_clients.items()):
+        if time.time() >= info.get('expire_time', float('inf')):
+            try:
+                conn.sendall(b"*-1\r\n")  # RESP null array
+            except:
+                pass
+            expired_bl.append(conn)
+    for conn in expired_bl:
+        list_blocking_clients.pop(conn, None)
+
 
 
 def read(conn):
@@ -574,12 +598,16 @@ def read(conn):
             conn.close()
             transactions.pop(conn, None)
             blocking_clients.pop(conn, None)
+            list_blocking_clients.pop(conn, None)
+
             return
     except:
         sel.unregister(conn)
         conn.close()
         transactions.pop(conn, None)
         blocking_clients.pop(conn, None)
+        list_blocking_clients.pop(conn, None)
+
         return
 
     cmd = data.upper()
