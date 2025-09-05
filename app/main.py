@@ -561,6 +561,14 @@ def execute_BLPOP_command(data, conn):
     }
     return None
 
+def execute_SUBSCRIBE_command(data):
+    split = data.split(b"\r\n")
+    channel = split[4]
+    resp  = b"*3\r\n"
+    resp += string(b"subscribe")
+    resp += string(channel)
+    resp += b":1\r\n"
+    return resp
 
 def check_blocked_timeouts():
     current_time = time.time()
@@ -624,6 +632,8 @@ def read(conn):
             conn.sendall(b"+QUEUED\r\n")
         else:
             conn.sendall(execute_set_command(data))
+    elif b"SUBSCRIBE" in cmd:
+        conn.sendall(b"-ERR SUBSCRIBE not implemented\r\n")
     elif b"GET" in cmd:
         if is_in_multi(conn):
             enqueue(conn, 'GET', data)
