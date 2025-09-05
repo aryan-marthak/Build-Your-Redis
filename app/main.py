@@ -12,6 +12,7 @@ blocking_clients = {}
 transactions = {}
 lists = {}
 list_blocking_clients = {}
+subscriptions = {}
 
 config = {
     'dir': '/tmp',
@@ -562,12 +563,22 @@ def execute_BLPOP_command(data, conn):
     return None
 
 def execute_SUBSCRIBE_command(data, conn):
+    global subscriptions
     split = data.split(b"\r\n")
     channel = split[4]
+    
+    if conn not in subscriptions:
+        subscriptions[conn] = set()
+    
+    already_subscribed = channel in subscriptions[conn]
+    subscriptions[conn].add(channel)
+    
+    count = len(subscriptions[conn])
+
     resp  = b"*3\r\n"
     resp += string(b"subscribe")
     resp += string(channel)
-    resp += b":1\r\n"
+    resp += b":" + str(count).encode() + b"1\r\n"
     return resp
 
 def check_blocked_timeouts():
