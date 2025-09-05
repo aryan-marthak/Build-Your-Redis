@@ -578,7 +578,7 @@ def execute_SUBSCRIBE_command(data, conn):
     resp  = b"*3\r\n"
     resp += string(b"subscribe")
     resp += string(channel)
-    resp += b":" + str(count).encode() + b"1\r\n"
+    resp += b":" + str(count).encode() + b"\r\n"
     return resp
 
 def check_blocked_timeouts():
